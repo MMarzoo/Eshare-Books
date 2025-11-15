@@ -12,6 +12,7 @@ import {
 } from "./operationValidation.service.js";
 import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
+import { NotificationService } from "../../Gateways/notification.service.js";
 
 // Helper Functions
 
@@ -150,6 +151,22 @@ export const createOperation = asyncHandler(async (req, res) => {
 
   const newOperation = await operationModel.create(newOperationData);
 
+  // Send Notification
+  const invitation = await NotificationService.sendInvitation({
+    fromUserId: user_src,
+    toUserId: user_dest,
+    invitationType: "operation-request",
+    message: `${req.user.firstName} wants to request your book.`,
+    metadata: {
+      operationId: newOperation._id,
+      bookId: book_dest_id,
+      operationType,
+    },
+  });
+
+  newOperation.invitationId = invitation.invitationId;
+  await newOperation.save();
+
   return successResponce({
     res,
     status: 201,
@@ -173,6 +190,23 @@ export const updateOperation = asyncHandler(async (req, res) => {
 
   if (!updated) {
     throw new AppError("Operation not found.", 404);
+  }
+  // send socket response
+  if (updated.invitationId && updated.user_dest) {
+    if (value.status === "accepted") {
+      await NotificationService.acceptInvitation(
+        updated.invitationId,
+        updated.user_dest
+      );
+    }
+
+    if (value.status === "refused") {
+      await NotificationService.refuseInvitation(
+        updated.invitationId,
+        updated.user_dest,
+        "Operation was refused"
+      );
+    }
   }
 
   return successResponce({
