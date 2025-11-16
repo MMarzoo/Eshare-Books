@@ -1,5 +1,4 @@
 import operationModel from "../../DB/models/operation.model.js";
-import { operationStatusEnum } from "../../enum.js";
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { findByIdAndUpdate, softDelete } from "../../DB/db.services.js";
 import userModel from "../../DB/models/User.model.js";
@@ -12,7 +11,7 @@ import {
 } from "./operationValidation.service.js";
 import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
-import { NotificationService } from "../../Gateways/notification.service.js";
+import { getNotificationService } from "../../Gateways/notification.instance.js";
 
 // Helper Functions
 
@@ -149,8 +148,9 @@ export const createOperation = asyncHandler(async (req, res) => {
   }
 
   const newOperation = await operationModel.create(newOperationData);
+  const notificationService = getNotificationService();
 
-  const invitation = await NotificationService.sendInvitation({
+  const invitation = await notificationService.sendInvitation({
     fromUserId: user_src,
     toUserId: user_dest,
     invitationType: "operation-request",
@@ -189,20 +189,19 @@ export const updateOperation = asyncHandler(async (req, res) => {
   if (!updated) {
     throw new AppError("Operation not found.", 404);
   }
-  if (!updated) {
-    throw new AppError("Operation not found.", 404);
-  }
+
+  const notificationService = getNotificationService();
   // send socket response
   if (updated.invitationId && updated.user_dest) {
     if (value.status === "accepted") {
-      await NotificationService.acceptInvitation(
+      await notificationService.acceptInvitation(
         updated.invitationId,
         updated.user_dest
       );
     }
 
     if (value.status === "refused") {
-      await NotificationService.refuseInvitation(
+      await notificationService.refuseInvitation(
         updated.invitationId,
         updated.user_dest,
         "Operation was refused"

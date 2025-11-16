@@ -13,11 +13,12 @@ import { glopalErrorHandling } from "./utils/glopalErrorHandling.js";
 import categoryRouter from "./modules/category/category.route.js";
 import wishlistRouter from "./modules/wishlist/wishlist.route.js";
 import { initializeSocketIO } from "./Gateways/soketio.gateway.js";
+import { initNotificationService } from "./Gateways/notification.instance.js";
 async function bootstrap() {
   dotenv.config();
   const port = process.env.PORT;
   const app = express();
-  
+
   // DB
   testConnection();
 
@@ -48,7 +49,8 @@ async function bootstrap() {
   const httpServer = app.listen(port, () => {
     console.log(`Server is running on port = ${port}`);
   });
-  initializeSocketIO(httpServer);
+  const io = initializeSocketIO(httpServer);
+  initNotificationService(io);
 }
 
 export default bootstrap;
