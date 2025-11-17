@@ -3,6 +3,7 @@ import {
   createOperation,
   deleteOperation,
   getAllOperation,
+  getOperationById,
   updateOperation,
 } from "./operation.controller.js";
 import { auth } from "../../middelwares/auth.middleware.js";
@@ -34,6 +35,8 @@ operationRouter.put(
   authorizeOperation,
   updateOperation
 );
+
+operationRouter.get("/:id", getOperationById);
 
 // @desc    Delete an operation
 // @route   DELETE /api/operations/:id

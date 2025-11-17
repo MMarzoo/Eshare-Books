@@ -1,211 +1,235 @@
+import operationModel from "../DB/models/operation.model.js";
 import { getUserSockets } from "../middelwares/socket.auth.middleware.js";
 
-// notification.service.js
 export class NotificationService {
-    constructor(io) {
-        this.io = io;
-        this.pendingInvitations = new Map(); // Store pending invitations in memory
-        // In production, you might want to use Redis or database for persistence
+  constructor(io) {
+    this.io = io;
+    this.pendingInvitations = new Map(); // Store pending invitations in memory
+  }
+
+  async sendInvitation(data) {
+    const { fromUserId, toUserId, transactionType, message, metadata } = data;
+
+    const invitationId = `inv_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
+    const invitation = {
+      id: invitationId,
+      fromUserId,
+      toUserId,
+      type: transactionType,
+      message: message || `You have a new ${transactionType} invitation`,
+      metadata: metadata || {},
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+
+    const key = toUserId.toString();
+    if (!this.pendingInvitations.has(key)) {
+      this.pendingInvitations.set(key, []);
+    }
+    this.pendingInvitations.get(key).push(invitation);
+
+    const recipientSockets = getUserSockets(toUserId);
+    if (recipientSockets.length > 0) {
+      recipientSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("new-invitation", invitation);
+      });
+      console.log(`✅ Invitation sent to online user: ${toUserId}`);
+    } else {
+      console.log(`📥 Invitation saved for offline user: ${toUserId}`);
     }
 
-    // Send invitation to user
-    async sendInvitation(data) {
-        const { fromUserId, toUserId, transactionType, message, metadata } = data;
+    return {
+      invitationId,
+      toUserId,
+      status: "sent",
+      invitation,
+    };
+  }
 
-        // Check if recipient is connected
-        const recipientSockets = getUserSockets(toUserId);
-        if (recipientSockets.length === 0) {
-            throw new Error("User is not connected");
-        }
+  async acceptInvitation(invitationId, userId, operationIdFromClient = null) {
+    const key = userId.toString();
+    const invitation = this.findInvitation(invitationId, key);
 
-        const invitationId = `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const invitation = {
-            id: invitationId,
-            fromUserId,
-            toUserId,
-            type: transactionType,
-            message: message || `You have a new ${transactionType} invitation`,
-            metadata: metadata || {},
-            status: 'pending',
-            createdAt: new Date().toISOString()
-        };
+    if (!invitation && !operationIdFromClient) {
+      throw new Error("Invitation not found and no operationId provided");
+    }
 
-        // Store invitation
-        if (!this.pendingInvitations.has(toUserId)) {
-            this.pendingInvitations.set(toUserId, []);
-        }
-        this.pendingInvitations.get(toUserId).push(invitation);
+    const operationId =
+      invitation?.metadata?.operationId || operationIdFromClient;
 
-        // Send to recipient
-        recipientSockets.forEach(socketId => {
-            this.io.to(socketId).emit("new-invitation", invitation);
+    if (invitation) {
+      invitation.status = "accepted";
+      invitation.respondedAt = new Date().toISOString();
+    }
+
+    const senderId = invitation?.fromUserId;
+    const senderSockets = senderId ? getUserSockets(senderId) : [];
+    const recipientSockets = getUserSockets(userId); // المستخدم اللي قبل الدعوة
+
+    if (operationId) {
+      const updatedOperation = await operationModel.findByIdAndUpdate(
+        operationId,
+        { status: "completed" },
+        { new: true }
+      );
+
+      if (!updatedOperation) {
+        console.warn(`⚠️ Operation not found for ID: ${operationId}`);
+      } else {
+        console.log(`✅ Operation ${operationId} marked as completed`);
+
+        // ✅ إرسال التحديث للطرفين
+        [...senderSockets, ...recipientSockets].forEach((socketId) => {
+          this.io.to(socketId).emit("operation-updated", updatedOperation);
         });
-
-        return {
-            invitationId,
-            toUserId,
-            status: 'sent',
-            invitation
-        };
+      }
     }
 
-    // Accept invitation
-    async acceptInvitation(invitationId, userId) {
-        const invitation = this.findInvitation(invitationId, userId);
-        
-        if (!invitation) {
-            throw new Error("Invitation not found");
-        }
-
-        invitation.status = 'accepted';
-        invitation.respondedAt = new Date().toISOString();
-
-        // Notify the sender
-        const senderSockets = getUserSockets(invitation.fromUserId);
-        senderSockets.forEach(socketId => {
-            this.io.to(socketId).emit("invitation-accepted", {
-                invitationId,
-                acceptedBy: userId,
-                invitation
-            });
+    if (senderSockets.length > 0) {
+      senderSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("invitation-accepted", {
+          invitationId,
+          acceptedBy: userId,
+          invitation,
         });
-
-        // Remove from pending
-        this.removeInvitation(invitationId, userId);
-
-        return {
-            invitationId,
-            status: 'accepted',
-            invitation
-        };
+      });
     }
 
-    // Refuse invitation
-    async refuseInvitation(invitationId, userId, reason) {
-        const invitation = this.findInvitation(invitationId, userId);
-        
-        if (!invitation) {
-            throw new Error("Invitation not found");
-        }
+    if (invitation) {
+      this.removeInvitation(invitationId, key);
+    }
 
-        invitation.status = 'refused';
-        invitation.refusalReason = reason;
-        invitation.respondedAt = new Date().toISOString();
+    return {
+      invitationId,
+      status: "accepted",
+      invitation,
+    };
+  }
 
-        // Notify the sender
-        const senderSockets = getUserSockets(invitation.fromUserId);
-        senderSockets.forEach(socketId => {
-            this.io.to(socketId).emit("invitation-refused", {
-                invitationId,
-                refusedBy: userId,
-                reason,
-                invitation
-            });
+  async refuseInvitation(invitationId, userId, reason) {
+    const key = userId.toString();
+    const invitation = this.findInvitation(invitationId, key);
+
+    if (!invitation) {
+      throw new Error("Invitation not found");
+    }
+
+    invitation.status = "refused";
+    invitation.refusalReason = reason;
+    invitation.respondedAt = new Date().toISOString();
+
+    const senderSockets = getUserSockets(invitation.fromUserId);
+    if (senderSockets.length > 0) {
+      senderSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("invitation-refused", {
+          invitationId,
+          refusedBy: userId,
+          reason,
+          invitation,
         });
-
-        // Remove from pending
-        this.removeInvitation(invitationId, userId);
-
-        return {
-            invitationId,
-            status: 'refused',
-            invitation
-        };
+      });
     }
 
-    // Cancel invitation
-    async cancelInvitation(invitationId, userId) {
-        // Find invitation by ID and sender
-        let invitation = null;
-        let recipientId = null;
+    this.removeInvitation(invitationId, key);
 
-        for (const [toUserId, invitations] of this.pendingInvitations.entries()) {
-            const foundInvitation = invitations.find(inv => 
-                inv.id === invitationId && inv.fromUserId === userId
-            );
-            if (foundInvitation) {
-                invitation = foundInvitation;
-                recipientId = toUserId;
-                break;
-            }
-        }
+    return {
+      invitationId,
+      status: "refused",
+      invitation,
+    };
+  }
 
-        if (!invitation) {
-            throw new Error("Invitation not found or you are not the sender");
-        }
+  async cancelInvitation(invitationId, userId) {
+    let invitation = null;
+    let recipientId = null;
 
-        invitation.status = 'canceled';
-        invitation.canceledAt = new Date().toISOString();
+    for (const [toUserId, invitations] of this.pendingInvitations.entries()) {
+      const foundInvitation = invitations.find(
+        (inv) => inv.id === invitationId && inv.fromUserId === userId
+      );
+      if (foundInvitation) {
+        invitation = foundInvitation;
+        recipientId = toUserId;
+        break;
+      }
+    }
 
-        // Notify the recipient
-        const recipientSockets = getUserSockets(recipientId);
-        recipientSockets.forEach(socketId => {
-            this.io.to(socketId).emit("invitation-canceled", {
-                invitationId,
-                canceledBy: userId,
-                invitation
-            });
+    if (!invitation) {
+      throw new Error("Invitation not found or you are not the sender");
+    }
+
+    invitation.status = "canceled";
+    invitation.canceledAt = new Date().toISOString();
+
+    const recipientSockets = getUserSockets(recipientId);
+    if (recipientSockets.length > 0) {
+      recipientSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("invitation-canceled", {
+          invitationId,
+          canceledBy: userId,
+          invitation,
         });
-
-        // Remove from pending
-        this.removeInvitation(invitationId, recipientId);
-
-        return {
-            invitationId,
-            status: 'canceled',
-            invitation
-        };
+      });
     }
 
-    // Get pending invitations for user
-    async getPendingInvitations(userId) {
-        return this.pendingInvitations.get(userId) || [];
-    }
+    this.removeInvitation(invitationId, recipientId.toString());
 
-    // Helper method to find invitation
-    findInvitation(invitationId, userId) {
-        const userInvitations = this.pendingInvitations.get(userId) || [];
-        return userInvitations.find(inv => inv.id === invitationId);
-    }
+    return {
+      invitationId,
+      status: "canceled",
+      invitation,
+    };
+  }
 
-    // Helper method to remove invitation
-    removeInvitation(invitationId, userId) {
-        const userInvitations = this.pendingInvitations.get(userId);
-        if (userInvitations) {
-            const index = userInvitations.findIndex(inv => inv.id === invitationId);
-            if (index !== -1) {
-                userInvitations.splice(index, 1);
-                if (userInvitations.length === 0) {
-                    this.pendingInvitations.delete(userId);
-                }
-            }
+  async getPendingInvitations(userId) {
+    const key = userId.toString();
+    return this.pendingInvitations.get(key) || [];
+  }
+
+  findInvitation(invitationId, userId) {
+    const key = userId.toString();
+    const userInvitations = this.pendingInvitations.get(key) || [];
+    return userInvitations.find((inv) => inv.id === invitationId);
+  }
+
+  removeInvitation(invitationId, userId) {
+    const key = userId.toString();
+    const userInvitations = this.pendingInvitations.get(key);
+    if (userInvitations) {
+      const index = userInvitations.findIndex((inv) => inv.id === invitationId);
+      if (index !== -1) {
+        userInvitations.splice(index, 1);
+        if (userInvitations.length === 0) {
+          this.pendingInvitations.delete(key);
         }
+      }
     }
+  }
 
-    // Get all pending invitations (for admin purposes)
-    getAllPendingInvitations() {
-        const allInvitations = [];
-        for (const [userId, invitations] of this.pendingInvitations.entries()) {
-            allInvitations.push(...invitations.map(inv => ({ ...inv })));
-        }
-        return allInvitations;
+  getAllPendingInvitations() {
+    const allInvitations = [];
+    for (const [userId, invitations] of this.pendingInvitations.entries()) {
+      allInvitations.push(...invitations.map((inv) => ({ ...inv })));
     }
+    return allInvitations;
+  }
 
-    // Clean up expired invitations (call this periodically)
-    cleanupExpiredInvitations(expiryTime = 24 * 60 * 60 * 1000) { // Default: 24 hours
-        const now = new Date();
-        for (const [userId, invitations] of this.pendingInvitations.entries()) {
-            const validInvitations = invitations.filter(invitation => {
-                const created = new Date(invitation.createdAt);
-                return (now - created) < expiryTime;
-            });
-            
-            if (validInvitations.length === 0) {
-                this.pendingInvitations.delete(userId);
-            } else {
-                this.pendingInvitations.set(userId, validInvitations);
-            }
-        }
+  cleanupExpiredInvitations(expiryTime = 24 * 60 * 60 * 1000) {
+    const now = new Date();
+    for (const [userId, invitations] of this.pendingInvitations.entries()) {
+      const validInvitations = invitations.filter((invitation) => {
+        const created = new Date(invitation.createdAt);
+        return now - created < expiryTime;
+      });
+
+      if (validInvitations.length === 0) {
+        this.pendingInvitations.delete(userId);
+      } else {
+        this.pendingInvitations.set(userId, validInvitations);
+      }
     }
+  }
 }

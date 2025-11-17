@@ -1,4 +1,5 @@
 import operationModel from "../../DB/models/operation.model.js";
+
 import { asyncHandler } from "../../utils/asyncHandler.js";
 import { findByIdAndUpdate, softDelete } from "../../DB/db.services.js";
 import userModel from "../../DB/models/User.model.js";
@@ -41,7 +42,18 @@ export const getAllOperation = asyncHandler(async (req, res) => {
   });
 });
 
-// ----------------------------------------------------------------------
+export const getOperationById = async (req, res, next) => {
+  try {
+    const operation = await operationModel.findById(req.params.id);
+    if (!operation) {
+      return res.status(404).json({ message: "Operation not found" });
+    }
+    return res.status(200).json({ operation });
+  } catch (error) {
+    return res.status(500).json({ message: "Server error", error });
+  }
+};
+
 // @desc    Create new operation (buy / exchange / borrow / donate)
 // @route   POST /api/operations
 export const createOperation = asyncHandler(async (req, res) => {
@@ -153,7 +165,7 @@ export const createOperation = asyncHandler(async (req, res) => {
   const invitation = await notificationService.sendInvitation({
     fromUserId: user_src,
     toUserId: user_dest,
-    invitationType: "operation-request",
+    transactionType: "operation-request",
     message: `${req.user.firstName} wants to request your book.`,
     metadata: {
       operationId: newOperation._id,
@@ -196,7 +208,8 @@ export const updateOperation = asyncHandler(async (req, res) => {
     if (value.status === "accepted") {
       await notificationService.acceptInvitation(
         updated.invitationId,
-        updated.user_dest
+        updated.user_dest,
+        updated._id
       );
     }
 
