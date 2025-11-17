@@ -159,6 +159,12 @@ export const createOperation = asyncHandler(async (req, res) => {
     newOperationData.totalPrice = pricePerDay * days;
   }
 
+  // ✅ حساب السعر في حالة الشراء
+  if (operationType === "buy") {
+    const bookPrice = Number(mainBook.Price) || 0;
+    newOperationData.totalPrice = bookPrice;
+  }
+
   const newOperation = await operationModel.create(newOperationData);
   const notificationService = getNotificationService();
 
