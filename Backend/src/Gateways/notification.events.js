@@ -49,16 +49,12 @@ export class NotificationEvents {
     this.socket.on("accept-invitation", async (data) => {
       try {
         console.log("📥 Received accept-invitation payload:", data);
-        const { invitationId, operationId } = data;
-
-        console.log(
-          `User ${this.userId} accepting invitation: ${invitationId}, operation: ${operationId}`
-        );
+        const { invitationId, operationId } = data; // ← تأكد إنه بياخد operationId
 
         const result = await this.notificationService.acceptInvitation(
           invitationId,
           this.userId,
-          operationId
+          operationId // ← بيمرره للـ service
         );
 
         this.socket.emit("invitation-accepted", result);
