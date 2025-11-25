@@ -78,7 +78,7 @@ export class NotificationService {
         { new: true }
       );
 
-      // Emit payment-required event to both parties
+      // Emit payment-required event
       const allSockets = [...senderSockets];
       allSockets.forEach((socketId) => {
         this.io.to(socketId).emit("payment-required", {
