@@ -18,7 +18,7 @@ export const initiateCardPayment = asyncHandler(async (req, res, next) => {
     first_name: user.name?.split(' ')[0] || "Customer",
     last_name: user.name?.split(' ').slice(1).join(' ') || ".",
     email: user.email || "customer@example.com",
-    phone_number: phoneNumber || user.phone || "+201234567890",
+    phone_number: "+201234567890",
     street: "NA",
     building: "NA",
     floor: "NA",
@@ -50,15 +50,11 @@ export const initiateCardPayment = asyncHandler(async (req, res, next) => {
 });
 
 export const initiateWalletPayment = asyncHandler(async (req, res, next) => {
-  const { totalPrice, phoneNumber } = req.body;
+  const { totalPrice } = req.body;
   const user = req.user;
 
   if (!totalPrice || totalPrice <= 0) {
     return next(new Error("Valid total price is required", { cause: 400 }));
-  }
-
-  if (!phoneNumber) {
-    return next(new Error("Phone number is required for wallet payment", { cause: 400 }));
   }
 
   // Prepare billing data
@@ -66,7 +62,7 @@ export const initiateWalletPayment = asyncHandler(async (req, res, next) => {
     first_name: user.name?.split(' ')[0] || "Customer",
     last_name: user.name?.split(' ').slice(1).join(' ') || ".",
     email: user.email || "customer@example.com",
-    phone_number: phoneNumber,
+    phone_number: phoneNumber || "+2011577894",
     street: "NA",
     building: "NA",
     floor: "NA",
@@ -79,7 +75,6 @@ export const initiateWalletPayment = asyncHandler(async (req, res, next) => {
   const paymentResult = await paymobService.initiateWalletPayment(
     totalPrice,
     billingData,
-    phoneNumber
   );
 
   if (!paymentResult.success) {
