@@ -12,6 +12,7 @@ import bookController from "./modules/Book/book.contoroller.js";
 import { glopalErrorHandling } from "./utils/glopalErrorHandling.js";
 import categoryRouter from "./modules/category/category.route.js";
 import wishlistRouter from "./modules/wishlist/wishlist.route.js";
+import paymentRouter from "./modules/payment/payment.routes.js"
 import { initializeSocketIO } from "./Gateways/soketio.gateway.js";
 async function bootstrap() {
   dotenv.config();
@@ -39,7 +40,7 @@ async function bootstrap() {
   app.use("/books", bookController);
   app.use("/categories", categoryRouter);
   app.use("/wishlist", wishlistRouter);
-
+  app.use("/api/v1/orders/paymob",paymentRouter)
   app.get("/", (req, res) => {
     res.json({ message: "Eshare Books is running" });
   });
