@@ -18,15 +18,15 @@ async function bootstrap() {
   dotenv.config();
   const port = process.env.PORT;
   const app = express();
-  
+
   // DB
   testConnection();
 
   app.use(
     cors({
-      origin: "*", // Allow all origins
-      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
+      origin: '*', // Allow all origins
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
       credentials: true,
     })
   );

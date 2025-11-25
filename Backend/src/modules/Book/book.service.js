@@ -38,7 +38,7 @@ const deleteFromCloudinary = async (fileUrl) => {
 };
 
 /* ──────────────────────────────
-   Add New Book (with AI Moderation)
+   📘 Add New Book (with Gemini AI Moderation)
 ────────────────────────────── */
 export const addBook = asyncHandler(async (req, res, next) => {
   const userId = req.user._id;
@@ -46,51 +46,196 @@ export const addBook = asyncHandler(async (req, res, next) => {
   const customId = nanoid(6);
   let uploadedImage = null;
 
-  // Check the text first
-  const textModeration = await moderateText(data.Title || '', data.Description || '');
-  if (textModeration.flagged) {
-    return res.status(400).json({
-      success: false,
-      message: `🚫 Book rejected: ${
-        textModeration.reason || 'Text contains harmful or hateful language.'
-      }`,
-      source: textModeration.source,
-    });
-  }
+  try {
+    // ─────────────────────────────────
+    // 1️⃣ Validate Required Fields First
+    // ─────────────────────────────────
+    if (!data.Title || data.Title.trim() === '') {
+      throw new AppError('❌ Title is required', 400);
+    }
 
-  // Upload the image after verifying the text
-  if (req.file) {
-    const folderPath = `Books/${userId}/book_${customId}`;
-    const upload = await uploadToCloudinary(req.file.buffer, folderPath);
-    uploadedImage = {
-      secure_url: upload.secure_url,
-      public_id: upload.public_id,
-    };
+    if (!data.categoryId) {
+      throw new AppError('❌ Category is required', 400);
+    }
 
-    // Check the image after it has been uploaded
-    const imageModeration = await moderateImage(uploadedImage.secure_url);
-    if (!imageModeration.safe) {
-      await deleteFromCloudinary(uploadedImage.secure_url);
+    if (!data.TransactionType) {
+      throw new AppError('❌ Transaction type is required', 400);
+    }
+
+    const validTransactionTypes = ['toSale', 'toBorrow', 'toExchange', 'toDonate'];
+    if (!validTransactionTypes.includes(data.TransactionType)) {
+      throw new AppError(
+        `❌ Invalid transaction type. Must be one of: ${validTransactionTypes.join(', ')}`,
+        400
+      );
+    }
+
+    // Validate Price for toSale
+    if (data.TransactionType === 'toSale' && (!data.Price || data.Price < 1)) {
+      throw new AppError('❌ Price is required and must be at least 1 for sale transactions', 400);
+    }
+
+    // ─────────────────────────────────
+    // 2️⃣ Moderate Text Content (Title + Description)
+    // ─────────────────────────────────
+    console.log('🔍 Step 1: Moderating text content...');
+
+    const textToModerate = `${data.Title || ''}\n${data.Description || ''}`.trim();
+    const textModeration = await moderateText(textToModerate);
+
+    console.log('📝 Text moderation result:', textModeration);
+
+    if (textModeration.flagged) {
       return res.status(400).json({
         success: false,
-        message: 'Book rejected: Image contains inappropriate or NSFW content.',
-        source: imageModeration.source || 'huggingface',
+        message: `🚫 Book rejected: ${
+          textModeration.reason || 'Text contains inappropriate content'
+        }`,
+        details: {
+          source: textModeration.source,
+          type: 'text_violation',
+        },
       });
     }
+
+    console.log('✅ Text moderation passed');
+
+    // ─────────────────────────────────
+    // 3️⃣ Upload and Moderate Image (if provided)
+    // ─────────────────────────────────
+    if (req.file) {
+      console.log('🖼️ Step 2: Processing and moderating image...');
+
+      try {
+        // Upload image to Cloudinary
+        const folderPath = `Books/${userId}/book_${customId}`;
+        const upload = await uploadToCloudinary(req.file.buffer, folderPath);
+
+        uploadedImage = {
+          secure_url: upload.secure_url,
+          public_id: upload.public_id,
+        };
+
+        console.log('☁️ Image uploaded to Cloudinary:', uploadedImage.public_id);
+
+        // Moderate the uploaded image
+        console.log('🔍 Moderating image content...');
+        const imageModeration = await moderateImage(uploadedImage.secure_url);
+
+        console.log('🖼️ Image moderation result:', imageModeration);
+
+        if (!imageModeration.safe) {
+          // Delete flagged image from Cloudinary
+          console.log('🗑️ Deleting inappropriate image from Cloudinary...');
+          await deleteFromCloudinary(uploadedImage.secure_url);
+
+          return res.status(400).json({
+            success: false,
+            message: `🚫 Book rejected: ${
+              imageModeration.reason || 'Image contains inappropriate content'
+            }`,
+            details: {
+              source: imageModeration.source,
+              type: 'image_violation',
+            },
+          });
+        }
+
+        console.log('✅ Image moderation passed');
+      } catch (imageError) {
+        console.error('❌ Image processing error:', imageError);
+
+        // Cleanup uploaded image if error occurs
+        if (uploadedImage?.public_id) {
+          try {
+            await deleteFromCloudinary(uploadedImage.secure_url);
+            console.log('🗑️ Cleaned up image after error');
+          } catch (cleanupError) {
+            console.error('Failed to cleanup image:', cleanupError);
+          }
+        }
+
+        throw new AppError('❌ Failed to process image. Please try again.', 500);
+      }
+    } else {
+      console.log('ℹ️ No image provided, skipping image moderation');
+    }
+
+    // ─────────────────────────────────
+    // 4️⃣ Create Book in Database
+    // ─────────────────────────────────
+    console.log('💾 Step 3: Creating book in database...');
+
+    const bookData = {
+      Title: data.Title.trim(),
+      Description: data.Description?.trim() || '',
+      categoryId: data.categoryId,
+      UserID: userId,
+      TransactionType: data.TransactionType,
+      IsModerated: true, 
+      isDeleted: false,
+    };
+
+    // Add image if uploaded
+    if (uploadedImage) {
+      bookData.image = uploadedImage;
+    }
+
+    // Add Price for sale transactions
+    if (data.TransactionType === 'toSale') {
+      bookData.Price = parseFloat(data.Price);
+    }
+
+    // Add PricePerDay for borrow transactions (optional)
+    if (data.TransactionType === 'toBorrow' && data.PricePerDay) {
+      bookData.PricePerDay = parseFloat(data.PricePerDay);
+    }
+
+    const newBook = await Book.create(bookData);
+
+    // Populate user and category for response
+    await newBook.populate('UserID', 'firstName secondName email avatar name');
+    await newBook.populate('categoryId', 'name');
+
+    console.log('✅ Book created successfully:', newBook._id);
+
+    // ─────────────────────────────────
+    // 5️⃣ Return Success Response
+    // ─────────────────────────────────
+    res.status(201).json({
+      success: true,
+      message: '✅ Book added successfully (AI Approved)',
+      book: {
+        _id: newBook._id,
+        Title: newBook.Title,
+        Description: newBook.Description,
+        categoryId: newBook.categoryId,
+        TransactionType: newBook.TransactionType,
+        Price: newBook.Price,
+        PricePerDay: newBook.PricePerDay,
+        image: newBook.image,
+        IsModerated: newBook.IsModerated,
+        UserID: newBook.UserID,
+        createdAt: newBook.createdAt,
+        updatedAt: newBook.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error adding book:', error);
+
+    // Cleanup uploaded image on any error
+    if (uploadedImage?.public_id) {
+      try {
+        await deleteFromCloudinary(uploadedImage.secure_url);
+        console.log('🗑️ Cleaned up uploaded image after error');
+      } catch (cleanupError) {
+        console.error('Failed to cleanup image:', cleanupError);
+      }
+    }
+
+    // Pass to error handler middleware
+    next(error);
   }
-
-  const newBook = await Book.create({
-    ...data,
-    UserID: userId,
-    image: uploadedImage,
-    IsModerated: true,
-  });
-
-  res.status(201).json({
-    success: true,
-    message: '✅ Book added successfully (AI Approved)',
-    book: newBook,
-  });
 });
 
 /* ──────────────────────────────
