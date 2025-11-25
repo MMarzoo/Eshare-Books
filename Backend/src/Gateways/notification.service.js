@@ -7,7 +7,8 @@ export class NotificationService {
     this.pendingInvitations = new Map();
   }
 
-  // Send invitation to user
+  // SEND INVITATION
+
   async sendInvitation(data) {
     const { fromUserId, toUserId, transactionType, message, metadata } = data;
 
@@ -26,24 +27,17 @@ export class NotificationService {
       createdAt: new Date().toISOString(),
     };
 
-    // ✅ Store invitation (حتى لو User offline)
     const key = toUserId.toString();
     if (!this.pendingInvitations.has(key)) {
       this.pendingInvitations.set(key, []);
     }
     this.pendingInvitations.get(key).push(invitation);
 
-    console.log(`💾 Invitation saved for user ${key}, ID: ${invitationId}`);
-
-    // ✅ Send if online
     const recipientSockets = getUserSockets(toUserId);
     if (recipientSockets.length > 0) {
       recipientSockets.forEach((socketId) => {
         this.io.to(socketId).emit("new-invitation", invitation);
       });
-      console.log(`✅ Invitation sent to online user: ${toUserId}`);
-    } else {
-      console.log(`📥 Invitation saved for offline user: ${toUserId}`);
     }
 
     return {
@@ -54,26 +48,17 @@ export class NotificationService {
     };
   }
 
-  // Accept invitation
+  // ACCEPT INVITATION
   async acceptInvitation(invitationId, userId, operationId = null) {
     const key = userId.toString();
     const invitation = this.findInvitation(invitationId, key);
 
-    console.log("🔍 acceptInvitation:", {
-      invitationId,
-      userId,
-      operationId,
-      found: !!invitation,
-    });
-
-    // ✅ Get operationId from invitation or parameter
     const finalOperationId = operationId || invitation?.metadata?.operationId;
 
     if (!invitation && !finalOperationId) {
       throw new Error("Invitation not found and no operationId provided");
     }
 
-    // Update invitation status
     if (invitation) {
       invitation.status = "accepted";
       invitation.respondedAt = new Date().toISOString();
@@ -83,37 +68,55 @@ export class NotificationService {
     const senderSockets = senderId ? getUserSockets(senderId) : [];
     const recipientSockets = getUserSockets(userId);
 
-    // ✅ Update Operation in Database
+    // Update Operation => completed
+    let updatedOperation = null;
+
     if (finalOperationId) {
-      try {
-        console.log(`🔄 Updating operation ${finalOperationId} to completed`);
+      updatedOperation = await operationModel.findByIdAndUpdate(
+        finalOperationId,
+        { status: "completed" },
+        { new: true }
+      );
 
-        const updatedOperation = await operationModel.findByIdAndUpdate(
-          finalOperationId,
-          { status: "completed" },
-          { new: true }
-        );
+      // Emit payment-required event to both parties
+      const allSockets = [...senderSockets, ...recipientSockets];
+      allSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("payment-required", {
+          operationId: updatedOperation._id,
+          totalPrice: updatedOperation.totalPrice,
+          paymentStatus: updatedOperation.paymentStatus,
+          status: updatedOperation.status,
+          message: "Payment is required to proceed",
+        });
+      });
 
-        if (updatedOperation) {
-          console.log(`✅ Operation ${finalOperationId} marked as completed`);
+      //Send Payment Notification (user_dest)
+      const buyerSockets = getUserSockets(updatedOperation.user_src);
+      buyerSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("payment-required", {
+          operationId: updatedOperation._id,
+          totalPrice: updatedOperation.totalPrice,
+          paymentStatus: updatedOperation.paymentStatus,
+          status: updatedOperation.status,
+          message: "Payment is required to proceed",
+        });
+      });
 
-          // ✅ Send operation-updated event to both parties
-          const allSockets = [...senderSockets, ...recipientSockets];
-          allSockets.forEach((socketId) => {
-            this.io.to(socketId).emit("operation-updated", updatedOperation);
-          });
-          console.log(
-            `📡 Sent operation-updated to ${allSockets.length} sockets`
-          );
-        } else {
-          console.warn(`⚠️ Operation not found: ${finalOperationId}`);
-        }
-      } catch (error) {
-        console.error(`❌ Error updating operation:`, error);
-      }
+      // Send Payment Notification → فقط للمشتري (user_src)
+      const paymentNotification = {
+        type: "payment",
+        message: "Your book request was accepted. Please proceed with payment.",
+        operationID: updatedOperation._id.toString(),
+        amount: updatedOperation.totalPrice,
+        createdAt: new Date().toISOString(),
+      };
+
+      buyerSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("new-notification", paymentNotification);
+      });
     }
 
-    // Notify sender
+    // Notify sender about acceptance
     if (senderSockets.length > 0) {
       senderSockets.forEach((socketId) => {
         this.io.to(socketId).emit("invitation-accepted", {
@@ -125,7 +128,6 @@ export class NotificationService {
       });
     }
 
-    // Remove invitation
     if (invitation) {
       this.removeInvitation(invitationId, key);
     }
@@ -135,19 +137,15 @@ export class NotificationService {
       status: "accepted",
       invitation,
       operationId: finalOperationId,
+      updatedOperation,
     };
   }
 
-  // Refuse invitation
+  // REFUSE INVITATION
+
   async refuseInvitation(invitationId, userId, reason, operationId = null) {
     const key = userId.toString();
     const invitation = this.findInvitation(invitationId, key);
-
-    console.log("🔍 refuseInvitation:", {
-      invitationId,
-      userId,
-      found: !!invitation,
-    });
 
     const finalOperationId = operationId || invitation?.metadata?.operationId;
 
@@ -165,31 +163,21 @@ export class NotificationService {
     const senderSockets = senderId ? getUserSockets(senderId) : [];
     const recipientSockets = getUserSockets(userId);
 
-    // ✅ Update Operation to rejected
+    // Update DB → rejected
+
     if (finalOperationId) {
-      try {
-        console.log(`🔄 Updating operation ${finalOperationId} to rejected`);
+      const updatedOperation = await operationModel.findByIdAndUpdate(
+        finalOperationId,
+        { status: "rejected" },
+        { new: true }
+      );
 
-        const updatedOperation = await operationModel.findByIdAndUpdate(
-          finalOperationId,
-          { status: "rejected" },
-          { new: true }
-        );
-
-        if (updatedOperation) {
-          console.log(`✅ Operation ${finalOperationId} marked as rejected`);
-
-          const allSockets = [...senderSockets, ...recipientSockets];
-          allSockets.forEach((socketId) => {
-            this.io.to(socketId).emit("operation-updated", updatedOperation);
-          });
-        }
-      } catch (error) {
-        console.error(`❌ Error updating operation:`, error);
-      }
+      const allSockets = [...senderSockets, ...recipientSockets];
+      allSockets.forEach((socketId) => {
+        this.io.to(socketId).emit("operation-updated", updatedOperation);
+      });
     }
 
-    // Notify sender
     if (senderSockets.length > 0) {
       senderSockets.forEach((socketId) => {
         this.io.to(socketId).emit("invitation-refused", {
@@ -201,7 +189,6 @@ export class NotificationService {
       });
     }
 
-    // Remove invitation
     if (invitation) {
       this.removeInvitation(invitationId, key);
     }
@@ -213,17 +200,18 @@ export class NotificationService {
     };
   }
 
-  // Cancel invitation
+  // CANCEL INVITATION
+
   async cancelInvitation(invitationId, userId) {
     let invitation = null;
     let recipientId = null;
 
     for (const [toUserId, invitations] of this.pendingInvitations.entries()) {
-      const foundInvitation = invitations.find(
+      const found = invitations.find(
         (inv) => inv.id === invitationId && inv.fromUserId === userId.toString()
       );
-      if (foundInvitation) {
-        invitation = foundInvitation;
+      if (found) {
+        invitation = found;
         recipientId = toUserId;
         break;
       }
@@ -256,20 +244,36 @@ export class NotificationService {
     };
   }
 
-  // Get pending invitations for user
+  // SEND PAYMENT SUCCESS NOTIFICATION
+
+  async sendPaymentSuccessNotification(userId, operation) {
+    const recipientSockets = getUserSockets(userId);
+
+    const successNotification = {
+      type: "payment-success",
+      message: "Your payment was completed successfully.",
+      operationID: operation._id.toString(),
+      amount: operation.totalPrice,
+      createdAt: new Date().toISOString(),
+    };
+
+    recipientSockets.forEach((socketId) => {
+      this.io.to(socketId).emit("new-notification", successNotification);
+    });
+  }
+
+  // HELPERS
   async getPendingInvitations(userId) {
     const key = userId.toString();
     return this.pendingInvitations.get(key) || [];
   }
 
-  // Helper: find invitation
   findInvitation(invitationId, userId) {
     const key = userId.toString();
     const userInvitations = this.pendingInvitations.get(key) || [];
     return userInvitations.find((inv) => inv.id === invitationId);
   }
 
-  // Helper: remove invitation
   removeInvitation(invitationId, userId) {
     const key = userId.toString();
     const userInvitations = this.pendingInvitations.get(key);
@@ -284,7 +288,6 @@ export class NotificationService {
     }
   }
 
-  // Get all pending invitations (admin)
   getAllPendingInvitations() {
     const allInvitations = [];
     for (const [userId, invitations] of this.pendingInvitations.entries()) {
@@ -293,7 +296,6 @@ export class NotificationService {
     return allInvitations;
   }
 
-  // Cleanup expired invitations
   cleanupExpiredInvitations(expiryTime = 24 * 60 * 60 * 1000) {
     const now = new Date();
     for (const [userId, invitations] of this.pendingInvitations.entries()) {

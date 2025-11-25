@@ -193,11 +193,15 @@ export const updateOperation = asyncHandler(async (req, res) => {
 
   if (value.status === "completed") {
     await NotificationInstance.send({
-      fromUserId: req.user._id,
-      toUserId: updated.user_src.toString(),
-      invitationType: "operation_completed",
-      message: `Your ${updated.operationType} operation is completed.`,
-      metadata: { operationId: updated._id.toString() },
+      fromUserId: req.user._id, 
+      toUserId: updated.user_src.toString(), 
+      invitationType: "payment_required",
+      message: `Your ${updated.operationType} request has been accepted. Complete payment now.`,
+      type: "payment", 
+      metadata: {
+        operationID: updated._id.toString(), 
+        amount: updated.totalPrice,
+      },
     });
   }
 
