@@ -102,7 +102,7 @@ export class NotificationService {
         });
       });
 
-      // Send Payment Notification → فقط للمشتري (user_src)
+      // Send Payment Notification (user_src)
       const paymentNotification = {
         type: "payment",
         message: "Your book request was accepted. Please proceed with payment.",
@@ -201,7 +201,6 @@ export class NotificationService {
   }
 
   // CANCEL INVITATION
-
   async cancelInvitation(invitationId, userId) {
     let invitation = null;
     let recipientId = null;
@@ -245,7 +244,6 @@ export class NotificationService {
   }
 
   // SEND PAYMENT SUCCESS NOTIFICATION
-
   async sendPaymentSuccessNotification(userId, operation) {
     const recipientSockets = getUserSockets(userId);
 
