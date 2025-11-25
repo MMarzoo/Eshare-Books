@@ -1,5 +1,5 @@
 import axios from 'axios'
-
+import crypto from 'crypto'
 class PaymobService {
   constructor() {
     this.baseURL = 'https://accept.paymob.com/api';
@@ -148,7 +148,7 @@ class PaymobService {
     }
   }
   verifyTransactionResponse(queryParams) {
-  const crypto = require('crypto');
+  
   
   // List of keys to exclude from HMAC calculation
   const excludedKeys = [

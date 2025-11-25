@@ -4,13 +4,17 @@ import {
   initiateCardPayment, 
   initiateWalletPayment, 
   handlePaymentCallback,
-  getPaymentStatus 
+  getPaymentStatus, 
+  PaymentPaymobWebhook,
+  responcecallback
 } from "./payment.controller.js";
 import { auth } from "../../middelwares/auth.middleware.js";
 
 
 const router = Router();
-
+// Proccesd callback
+router.post("/callback", PaymentPaymobWebhook);
+router.get("/webhook" , responcecallback)
 router.post("/card", auth, initiateCardPayment);
 router.post("/wallet", auth, initiateWalletPayment);
 router.get("/status/:orderId", auth, getPaymentStatus);

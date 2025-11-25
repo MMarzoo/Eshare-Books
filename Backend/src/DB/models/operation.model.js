@@ -40,10 +40,35 @@ const operationSchema = new mongoose.Schema({
   durationDays: { type: Number },
   isDeleted: { type: Boolean, default: false },
   totalPrice: {
-    type: Number,
-    min: 0,
-    default: 0
-  },
+    type: Number,
+    min: 0,
+    default: 0
+  },
+
+  paymentStatus: {
+    type: String,
+    enum: ["pending", "paid", "failed", "refunded"],
+    default: "pending",
+  },
+
+  paymentReference: {
+    type: String, // Paymob order ID
+    unique: true,
+    sparse: true
+  },
+  paymentToken: {
+    type: String, // Paymob payment token
+  },
+  transactionId: {
+    type: String, // Paymob transaction ID
+  },
+
+  // Enhanced payment tracking
+  paymentAttempts: {
+    type: Number,
+    default: 0
+  },
+  lastPaymentAttempt: Date
 });
 
 // operationSchema.pre("save", function (next) {
