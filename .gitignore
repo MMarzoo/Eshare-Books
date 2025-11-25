@@ -9,3 +9,4 @@ frontend-user/dist
 frontend-user/.vite
 Backend/.vscode/launch.json
 Backend/clinetSideApp
+Backend/notes.json

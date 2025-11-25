@@ -12,7 +12,11 @@ import {
 } from "./operationValidation.service.js";
 import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
+<<<<<<< HEAD
 import { getNotificationService } from "../../Gateways/notification.instance.js";
+=======
+import { NotificationInstance } from "../../Gateways/notification.instance.js";
+>>>>>>> dev
 
 // Helper Functions
 
@@ -42,6 +46,7 @@ export const getAllOperation = asyncHandler(async (req, res) => {
   });
 });
 
+<<<<<<< HEAD
 export const getOperationById = async (req, res, next) => {
   try {
     const operation = await operationModel.findById(req.params.id);
@@ -56,6 +61,11 @@ export const getOperationById = async (req, res, next) => {
 
 // @desc    Create new operation (buy / exchange / borrow / donate)
 // @route   POST /api/operations
+=======
+// ----------------------------------------------------------------------
+// @desc    Create new operation (buy / exchange / borrow / donate)
+// @route   POST /api/operations
+>>>>>>> dev
 export const createOperation = asyncHandler(async (req, res) => {
   const {
     user_dest,
@@ -68,6 +78,10 @@ export const createOperation = asyncHandler(async (req, res) => {
   } = req.validatedBody;
 
   const user_src = req.user._id;
+<<<<<<< HEAD
+=======
+  const srcUser = await findUserById(user_src);
+>>>>>>> dev
 
   if (user_src.toString() === user_dest.toString()) {
     throw new AppError("You cannot perform an operation with yourself.", 400);
@@ -135,9 +149,14 @@ export const createOperation = asyncHandler(async (req, res) => {
       const start = new Date(startDate);
       const end = new Date(endDate);
 
+<<<<<<< HEAD
       if (end <= start) {
         throw new AppError("End date must be after start date.", 400);
       }
+=======
+      if (end <= start)
+        throw new AppError("End date must be after start date.", 400);
+>>>>>>> dev
 
       const diffTime = Math.abs(end - start);
       days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -158,6 +177,7 @@ export const createOperation = asyncHandler(async (req, res) => {
 
     newOperationData.totalPrice = pricePerDay * days;
   }
+<<<<<<< HEAD
 
   // ✅ حساب السعر في حالة الشراء
   if (operationType === "buy") {
@@ -183,6 +203,27 @@ export const createOperation = asyncHandler(async (req, res) => {
   newOperation.invitationId = invitation.invitationId;
   await newOperation.save();
 
+=======
+  if (operationType === "buy") {
+    const bookPrice = Number(mainBook.Price) || 0;
+    newOperationData.totalPrice = bookPrice;
+  }
+  // --- نهاية منطق الاستعارة ---
+
+  const newOperation = await operationModel.create(newOperationData);
+  await NotificationInstance.send({
+    fromUserId: user_src,
+    toUserId: user_dest,
+    invitationType: "operation_request",
+    message: `You have a new ${operationType} request from ${srcUser.firstName} ${srcUser.secondName}`,
+    metadata: {
+      operationId: newOperation._id.toString(),
+      bookId: book_dest_id.toString(),
+      type: operationType,
+    },
+  });
+
+>>>>>>> dev
   return successResponce({
     res,
     status: 201,
@@ -208,6 +249,7 @@ export const updateOperation = asyncHandler(async (req, res) => {
     throw new AppError("Operation not found.", 404);
   }
 
+<<<<<<< HEAD
   const notificationService = getNotificationService();
   // send socket response
   if (updated.invitationId && updated.user_dest) {
@@ -226,6 +268,16 @@ export const updateOperation = asyncHandler(async (req, res) => {
         "Operation was refused"
       );
     }
+=======
+  if (value.status === "completed") {
+    await NotificationInstance.send({
+      fromUserId: req.user._id,
+      toUserId: updated.user_src.toString(),
+      invitationType: "operation_completed",
+      message: `Your ${updated.operationType} operation is completed.`,
+      metadata: { operationId: updated._id.toString() },
+    });
+>>>>>>> dev
   }
 
   return successResponce({
@@ -258,3 +310,28 @@ export const deleteOperation = asyncHandler(async (req, res) => {
     data: deleted,
   });
 });
+<<<<<<< HEAD
+=======
+
+// @desc    Get user operations (as source or destination)
+// @route   GET /api/operations/user
+// @access  Authenticated users
+export const getUserOperations = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+
+  const operations = await operationModel
+    .find({
+      $or: [{ user_src: userId }, { user_dest: userId }],
+      isDeleted: false,
+    })
+    .populate("book_dest_id", "_id Title")
+    .select("book_dest_id status operationType");
+
+  return successResponce({
+    res,
+    status: 200,
+    message: "User operations retrieved successfully",
+    data: operations,
+  });
+});
+>>>>>>> dev
