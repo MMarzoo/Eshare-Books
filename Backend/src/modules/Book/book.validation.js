@@ -8,24 +8,28 @@ const objectId = (value, helpers) => {
   return value;
 };
 
+// ✅ Max limits
+const MAX_SALE_PRICE = 100000;
+const MAX_BORROW_PRICE_PER_DAY = 500;
+
 export const BookValidation = Joi.object({
   Title: Joi.string().required().trim(),
   Description: Joi.string().allow("").optional(),
   categoryId: Joi.string().custom(objectId).required(),
-  // ✅ يجب إضافة نوع المعاملة للتحقق
-  TransactionType: Joi.string().valid("toSale", "toBorrow", "toDonate").required(),
 
-  // ✅ السعر مطلوب فقط إذا كان نوع المعاملة "للبيع"
-  Price: Joi.number().min(0).when('TransactionType', {
-    is: 'toSale',
+  TransactionType: Joi.string()
+    .valid("toSale", "toBorrow", "toDonate")
+    .required(),
+
+  Price: Joi.number().min(1).max(MAX_SALE_PRICE).when("TransactionType", {
+    is: "toSale",
     then: Joi.required(),
-    otherwise: Joi.optional().allow(null, 0), // اختياري في الحالات الأخرى
+    otherwise: Joi.optional().allow(null, 0),
   }),
 
-  // ✅ سعر اليوم مطلوب فقط إذا كان نوع المعاملة "للاستعارة"
-  PricePerDay: Joi.number().min(0).when('TransactionType', {
-    is: 'toBorrow',
+  PricePerDay: Joi.number().min(1).max(MAX_BORROW_PRICE_PER_DAY).when("TransactionType", {
+    is: "toBorrow",
     then: Joi.required(),
-    otherwise: Joi.optional().allow(null, 0), // اختياري في الحالات الأخرى
+    otherwise: Joi.optional().allow(null, 0),
   }),
 });

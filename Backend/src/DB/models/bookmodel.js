@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
-
+// ✅ Max limits
+const MAX_SALE_PRICE = 100000;
+const MAX_BORROW_PRICE_PER_DAY = 500;
 const bookSchema = new mongoose.Schema(
   {
     // ISBN: {
@@ -54,10 +56,12 @@ const bookSchema = new mongoose.Schema(
       type: Number,
       // required: true,
       min: 1,
+      max: MAX_SALE_PRICE, // ✅ max sale price
     },
     PricePerDay: {
       type: Number,
       min: 1,
+      max: MAX_BORROW_PRICE_PER_DAY, // ✅ max borrow per day
     },
     // ✅ Soft Delete flag
     isDeleted: {

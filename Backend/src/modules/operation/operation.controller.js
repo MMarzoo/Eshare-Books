@@ -15,17 +15,11 @@ import { AppError } from "../../utils/AppError.js";
 import { NotificationInstance } from "../../Gateways/notification.instance.js";
 
 // Helper Functions
-
-// Find book by ID
 const findBookById = async (bookId) => await bookmodel.findById(bookId);
-
-// Find user by ID
 const findUserById = async (userId) => await userModel.findById(userId);
 
-// Controllers
-
-// @desc    Get all operations
-// @route   GET /api/operations
+// @desc    Get all operations
+// @route   GET /api/operations
 export const getAllOperation = asyncHandler(async (req, res) => {
   const operations = await operationModel
     .find({ isDeleted: false })
@@ -117,18 +111,34 @@ export const createOperation = asyncHandler(async (req, res) => {
     newOperationData.book_src_id = book_src_id;
   }
 
+  // ---------------- ✅ BORROW VALIDATION + TOTAL PRICE ----------------
   if (operationType === "borrow") {
     let days = 0;
     const pricePerDay = Number(mainBook.PricePerDay) || 0;
+
+    // ✅ تاريخ النهاردة بدون وقت
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     if (startDate && endDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
 
-      if (end <= start)
-        throw new AppError("End date must be after start date.", 400);
+      // ✅ شيل الوقت
+      start.setHours(0, 0, 0, 0);
+      end.setHours(0, 0, 0, 0);
 
-      const diffTime = Math.abs(end - start);
+      // ✅ منع تاريخ في الماضي
+      if (start < today) {
+        throw new AppError("Start date cannot be in the past.", 400);
+      }
+
+      // ✅ end لازم يبقى بعد start
+      if (end <= start) {
+        throw new AppError("End date must be after start date.", 400);
+      }
+
+      const diffTime = end - start;
       days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
       newOperationData.startDate = startDate;
@@ -147,13 +157,15 @@ export const createOperation = asyncHandler(async (req, res) => {
 
     newOperationData.totalPrice = pricePerDay * days;
   }
+
+  // ---------------- BUY TOTAL PRICE ----------------
   if (operationType === "buy") {
     const bookPrice = Number(mainBook.Price) || 0;
     newOperationData.totalPrice = bookPrice;
   }
-  // --- نهاية منطق الاستعارة ---
 
   const newOperation = await operationModel.create(newOperationData);
+
   await NotificationInstance.send({
     fromUserId: user_src,
     toUserId: user_dest,
@@ -174,8 +186,8 @@ export const createOperation = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Update operation status
-// @route   PUT /api/operations/:id
+// @desc    Update operation status
+// @route   PUT /api/operations/:id
 export const updateOperation = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const value = req.validatedBody;
@@ -193,13 +205,13 @@ export const updateOperation = asyncHandler(async (req, res) => {
 
   if (value.status === "completed") {
     await NotificationInstance.send({
-      fromUserId: req.user._id, 
-      toUserId: updated.user_src.toString(), 
+      fromUserId: req.user._id,
+      toUserId: updated.user_src.toString(),
       invitationType: "payment_required",
       message: `Your ${updated.operationType} request has been accepted. Complete payment now.`,
-      type: "payment", 
+      type: "payment",
       metadata: {
-        operationID: updated._id.toString(), 
+        operationID: updated._id.toString(),
         amount: updated.totalPrice,
       },
     });
@@ -213,8 +225,8 @@ export const updateOperation = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Soft delete an operation
-// @route   DELETE /api/operations/:id
+// @desc    Soft delete an operation
+// @route   DELETE /api/operations/:id
 export const deleteOperation = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
@@ -236,9 +248,8 @@ export const deleteOperation = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get user operations (as source or destination)
+// @desc    Get user operations
 // @route   GET /api/operations/user
-// @access  Authenticated users
 export const getUserOperations = asyncHandler(async (req, res) => {
   const userId = req.user._id;
 
