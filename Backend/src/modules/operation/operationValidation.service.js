@@ -3,6 +3,8 @@ import {
   checkActiveBookOperation,
   checkExistingOperation,
 } from "../../utils/dbHelpers.js";
+import operationModel from "../../DB/models/operation.model.js";
+import { operationStatusEnum } from "../../enum.js";
 
 export const validateBookTransactionType = ({
   operationType,
@@ -120,5 +122,42 @@ export const validateDuplicateOperation = async ({
 
   if (existing) {
     throw new AppError("This operation already exists and is pending.");
+  }
+};
+
+// ✅ NEW: منع تداخل فترات الاستعارة
+export const validateBorrowAvailability = async ({
+  bookId,
+  startDate,
+  endDate,
+}) => {
+  if (!startDate || !endDate) return;
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  const conflict = await operationModel.findOne({
+    book_dest_id: bookId,
+    operationType: "borrow",
+    isDeleted: false,
+    status: {
+      $in: [
+        operationStatusEnum.PENDING,
+        operationStatusEnum.ACCEPTED,
+        operationStatusEnum.COMPLETED,
+      ],
+    },
+    // overlap condition:
+    startDate: { $lte: end },
+    endDate: { $gte: start },
+  });
+
+  if (conflict) {
+    throw new AppError(
+      `This book is already reserved from ${conflict.startDate.toDateString()} to ${conflict.endDate.toDateString()}. Please choose other dates.`,
+      400
+    );
   }
 };

@@ -9,6 +9,7 @@ import {
   validateBookTransactionType,
   validateDuplicateOperation,
   validateOperationOwnership,
+  validateBorrowAvailability, // ✅ NEW
 } from "./operationValidation.service.js";
 import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
@@ -116,7 +117,6 @@ export const createOperation = asyncHandler(async (req, res) => {
     let days = 0;
     const pricePerDay = Number(mainBook.PricePerDay) || 0;
 
-    // ✅ تاريخ النهاردة بدون وقت
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -124,19 +124,23 @@ export const createOperation = asyncHandler(async (req, res) => {
       const start = new Date(startDate);
       const end = new Date(endDate);
 
-      // ✅ شيل الوقت
       start.setHours(0, 0, 0, 0);
       end.setHours(0, 0, 0, 0);
 
-      // ✅ منع تاريخ في الماضي
       if (start < today) {
         throw new AppError("Start date cannot be in the past.", 400);
       }
 
-      // ✅ end لازم يبقى بعد start
       if (end <= start) {
         throw new AppError("End date must be after start date.", 400);
       }
+
+      // ✅ NEW: منع تداخل فترات الحجز
+      await validateBorrowAvailability({
+        bookId: book_dest_id,
+        startDate,
+        endDate,
+      });
 
       const diffTime = end - start;
       days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -145,12 +149,14 @@ export const createOperation = asyncHandler(async (req, res) => {
       newOperationData.endDate = endDate;
       newOperationData.numberOfDays = days;
     } else if (numberOfDays) {
-      days = Number(numberOfDays);
-      if (days <= 0) throw new AppError("Invalid number of days.", 400);
-      newOperationData.numberOfDays = days;
+      // ⚠️ لازم تاريخين عشان نعرف نمنع التداخل
+      throw new AppError(
+        "Start & end dates are required to check availability.",
+        400
+      );
     } else {
       throw new AppError(
-        "Borrow duration (dates or number of days) is required.",
+        "Borrow duration (dates) is required.",
         400
       );
     }
