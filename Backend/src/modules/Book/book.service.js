@@ -172,7 +172,7 @@ export const addBook = asyncHandler(async (req, res, next) => {
       categoryId: data.categoryId,
       UserID: userId,
       TransactionType: data.TransactionType,
-      IsModerated: true, 
+      IsModerated: true,
       isDeleted: false,
     };
 
@@ -247,7 +247,7 @@ export const addBook = asyncHandler(async (req, res, next) => {
 export const getAllBooks = asyncHandler(async (req, res, next) => {
   let { title, page = 1, limit = 10 } = req.query;
 
-  const filter = { isDeleted: false };
+  const filter = { isDeleted: false, IsModerated: true };
   if (title) filter.Title = { $regex: title, $options: 'i' };
 
   const pageNum = Number(page) || 1;
@@ -434,6 +434,7 @@ export const getAllBooksIncludingAll = asyncHandler(async (req, res, next) => {
 /* ──────────────────────────────
    📘 Get Books by Category
    - نفس منطق availability + إخفاء الكتب المباعة/المتمدية
+   - Only return books with IsModerated: true
 ────────────────────────────── */
 export const getBooksByCategory = asyncHandler(async (req, res) => {
   const { categoryId } = req.params;
@@ -458,6 +459,7 @@ export const getBooksByCategory = asyncHandler(async (req, res) => {
   const books = await Book.find({
     categoryId,
     isDeleted: false,
+    IsModerated: true, // ⬅️ نضيف الشرط هنا
     _id: { $nin: soldBookIds },
   })
     .populate('UserID', 'firstName secondName email avatar name')
@@ -480,6 +482,7 @@ export const getBooksByCategory = asyncHandler(async (req, res) => {
    📘 Get Book by ID
    - يخفي الكتب اللي اتباعت أو اتمدت (BUY / DONATE + COMPLETED)
    - يعلّم الكتب المستعارة حاليًا بـ isBorrowedNow + currentBorrow
+   - Only return books with IsModerated: true
 ────────────────────────────── */
 export const getBookById = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -507,8 +510,12 @@ export const getBookById = asyncHandler(async (req, res) => {
     endDate: { $gte: now },
   });
 
-  // 3️⃣ نجيب الكتاب نفسه
-  const bookDoc = await Book.findOne({ _id: id, isDeleted: false })
+  // 3️⃣ نجيب الكتاب نفسه مع شرط IsModerated
+  const bookDoc = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+    IsModerated: true, // ⬅️ نضيف الشرط هنا
+  })
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name');
 
@@ -634,6 +641,8 @@ export const getBooksByTransactionType = asyncHandler(async (req, res) => {
 
 /* ──────────────────────────────
    📘 Get Books by UserId
+   - Only return books with IsModerated: true
+   - Hide sold/donated books (BUY/DONATE + COMPLETED)
 ────────────────────────────── */
 export const getBooksByUserId = asyncHandler(async (req, res) => {
   const { userId } = req.params;
@@ -642,9 +651,19 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
     throw new AppError('❌ Invalid user ID', 400);
   }
 
+  // 1️⃣ نجيب الـ IDs للكتب اللي اتباعت أو اتمدت (BUY + DONATE مكتملة)
+  const soldOrDonatedBookIds = await Operation.distinct('book_dest_id', {
+    operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+  });
+
+  // 2️⃣ نجيب الكتب مع الفلترة
   const books = await Book.find({
     UserID: userId,
     isDeleted: false,
+    IsModerated: true, // ⬅️ بس الكتب المعمولها moderation
+    _id: { $nin: soldOrDonatedBookIds }, // ⬅️ ما نرجعش الكتب المباعة/المتمدية
   })
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name')
