@@ -80,7 +80,7 @@ export class NotificationService {
 
       // check for transactionType for toDonate
       if (updatedOperation.operationType !== "donate") {
-        // Emit payment-required event → لصاحب الكتاب
+        // Emit payment-required event
         senderSockets.forEach((socketId) => {
           this.io.to(socketId).emit("payment-required", {
             operationId: updatedOperation._id,
