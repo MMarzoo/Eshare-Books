@@ -12,6 +12,7 @@ import {
   adminDeleteBook,
   adminUpdateModeration,
   adminRestoreBook,
+  adminUpdateBookCategory,
 } from './book.service.js';
 import { upload, fileValidation } from '../../utils/file Uploadind/multerCloud.js';
 import { auth, adminCheckmiddelware } from '../../middelwares/auth.middleware.js';
@@ -45,6 +46,9 @@ router.patch('/admin/books/:id/moderate', auth, adminCheckmiddelware, adminUpdat
 
 // 📘 Admin Restore Deleted Book
 router.patch('/admin/books/:id/restore', auth, adminCheckmiddelware, adminRestoreBook);
+
+// 📘 Admin Update Book Category
+router.patch('/admin/books/:id/category', auth, adminCheckmiddelware, adminUpdateBookCategory);
 
 /* ──────────────────────────────
    📘 Get Books by Category ID

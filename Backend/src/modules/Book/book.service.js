@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 // 👇 إضافة موديل العمليات + الـ enums
 import Operation from '../../DB/models/operation.model.js';
 import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
+import categoryModel from '../../DB/models/category.model.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -786,5 +787,96 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     success: true,
     message: 'Book restored successfully by admin',
     restoredBook: { id: book._id, title: book.Title },
+  });
+});
+
+/* ──────────────────────────────
+   👑 Admin: Update Book Category
+   - Allows admin to change book category
+   - Useful for correcting misclassified books
+────────────────────────────── */
+export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const { categoryId } = req.body;
+
+  // ─────────────────────────────────
+  // 1️⃣ Validate Required Fields
+  // ─────────────────────────────────
+  if (!categoryId) {
+    throw new AppError('❌ categoryId is required', 400);
+  }
+
+  // Validate categoryId format
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    throw new AppError('❌ Invalid category ID format', 400);
+  }
+
+  // ─────────────────────────────────
+  // 2️⃣ Check if Category Exists and Not Deleted
+  // ─────────────────────────────────
+  const category = await categoryModel.findOne({
+    _id: categoryId,
+    isDeleted: false,
+  });
+
+  if (!category) {
+    throw new AppError('❌ Category not found or has been deleted', 404);
+  }
+
+  // ─────────────────────────────────
+  // 3️⃣ Check if Book Exists and Not Deleted
+  // ─────────────────────────────────
+  const book = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+  });
+
+  if (!book) {
+    throw new AppError('❌ Book not found or has been deleted', 404);
+  }
+
+  // ─────────────────────────────────
+  // 4️⃣ Check if Book is Sold or Donated
+  // ─────────────────────────────────
+  const soldOrDonated = await Operation.findOne({
+    book_dest_id: id,
+    operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+  });
+
+  if (soldOrDonated) {
+    throw new AppError('❌ Cannot update category for a book that has been sold or donated', 400);
+  }
+
+  // ─────────────────────────────────
+  // 5️⃣ Update Book Category
+  // ─────────────────────────────────
+  const oldCategoryId = book.categoryId;
+
+  book.categoryId = categoryId;
+  await book.save();
+
+  // Populate the updated book for response
+  await book.populate('UserID', 'firstName secondName email avatar name');
+  await book.populate('categoryId', 'name');
+
+  // ─────────────────────────────────
+  // 6️⃣ Return Success Response
+  // ─────────────────────────────────
+  res.json({
+    success: true,
+    message: '✅ Book category updated successfully',
+    book: {
+      id: book._id,
+      title: book.Title,
+      oldCategory: oldCategoryId,
+      newCategory: {
+        id: category._id,
+        name: category.name,
+      },
+      updatedBy: req.user._id,
+      updatedAt: new Date(),
+    },
   });
 });
