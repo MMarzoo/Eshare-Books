@@ -792,8 +792,8 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
 
 /* ──────────────────────────────
    👑 Admin: Update Book Category
-   - Allows admin to change book category
-   - Useful for correcting misclassified books
+   - Returns the complete book with the exact same structure as getBookById
+   - Useful for correcting misclassified books while maintaining response consistency
 ────────────────────────────── */
 export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -852,31 +852,51 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
   // ─────────────────────────────────
   // 5️⃣ Update Book Category
   // ─────────────────────────────────
-  const oldCategoryId = book.categoryId;
-
   book.categoryId = categoryId;
   await book.save();
 
-  // Populate the updated book for response
-  await book.populate('UserID', 'firstName secondName email avatar name');
-  await book.populate('categoryId', 'name');
+  // ─────────────────────────────────
+  // 6️⃣ Get Updated Book with Same Structure as getBookById
+  // ─────────────────────────────────
+  const now = new Date();
+
+  // Check if there's active borrow operation (same logic as getBookById)
+  const activeBorrowOp = await Operation.findOne({
+    book_dest_id: id,
+    operationType: operationTypeEnum.BORROW,
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+    startDate: { $lte: now },
+    endDate: { $gte: now },
+  });
+
+  // Get the updated book with population (same fields as getBookById)
+  const updatedBook = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+  })
+    .populate('UserID', 'firstName secondName email avatar name fullName')
+    .populate('categoryId', 'name');
+
+  if (!updatedBook) {
+    throw new AppError('❌ Book not found after update', 404);
+  }
+
+  // Convert to object and add the same fields as getBookById
+  const bookResponse = updatedBook.toObject();
+  bookResponse.isBorrowedNow = !!activeBorrowOp;
+  bookResponse.currentBorrow = activeBorrowOp
+    ? {
+        startDate: activeBorrowOp.startDate,
+        endDate: activeBorrowOp.endDate,
+      }
+    : null;
 
   // ─────────────────────────────────
-  // 6️⃣ Return Success Response
+  // 7️⃣ Return Success Response (Same Structure as getBookById)
   // ─────────────────────────────────
   res.json({
-    success: true,
     message: '✅ Book category updated successfully',
-    book: {
-      id: book._id,
-      title: book.Title,
-      oldCategory: oldCategoryId,
-      newCategory: {
-        id: category._id,
-        name: category.name,
-      },
-      updatedBy: req.user._id,
-      updatedAt: new Date(),
-    },
+    book: bookResponse,
   });
 });
