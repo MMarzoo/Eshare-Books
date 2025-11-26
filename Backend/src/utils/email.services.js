@@ -259,7 +259,6 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 // }
 
 export const template = (email) => {
-  // const encodedEmail = encodeURIComponent(email);
   const verifyUrl = `${process.env.BASE_URL}/auth/verify/${email}`;
   
   return `
@@ -268,58 +267,98 @@ export const template = (email) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Verification</title>
+    <title>Verify Your Esharebook Account</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
             color: #333;
             max-width: 600px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 0;
+            background-color: #f8fafc;
         }
         .container {
-            background-color: #f9f9f9;
+            background-color: #ffffff;
             border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            margin: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
             padding: 30px;
-            border: 1px solid #ddd;
+            text-align: center;
+            color: white;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .header p {
+            margin: 5px 0 0;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 30px;
         }
         .button {
             display: inline-block;
-            padding: 12px 24px;
-            background-color: #007bff;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
             color: white;
             text-decoration: none;
-            border-radius: 4px;
-            font-weight: bold;
+            border-radius: 6px;
+            font-weight: 600;
             margin: 20px 0;
-        }
-        .button:hover {
-            background-color: #0056b3;
+            text-align: center;
         }
         .footer {
-            margin-top: 30px;
+            background-color: #f1f5f9;
+            padding: 20px;
+            text-align: center;
             font-size: 12px;
-            color: #666;
+            color: #64748b;
+        }
+        .link {
+            color: #4f46e5;
+            word-break: break-all;
+        }
+        .divider {
+            height: 1px;
+            background-color: #e2e8f0;
+            margin: 25px 0;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Verify Your Email Address</h2>
-        <p>Hello!</p>
-        <p>Thank you for registering. Please click the button below to verify your email address:</p>
+        <div class="header">
+            <h1>Esharebook</h1>
+            <p>Connect, Share, Discover</p>
+        </div>
         
-        <center>
-            <a href="${verifyUrl}" class="button">Verify Email</a>
-        </center>
-        
-        <p>If the button doesn't work, you can also copy and paste this link into your browser:</p>
-        <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+        <div class="content">
+            <h2>Verify Your Email Address</h2>
+            <p>Hello!</p>
+            <p>Thank you for joining Esharebook! To complete your registration and start sharing your favorite books, please verify your email address by clicking the button below:</p>
+            
+            <div style="text-align: center;">
+                <a href="${verifyUrl}" class="button">Verify My Email</a>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <p>If the button doesn't work, you can also copy and paste the following link into your browser:</p>
+            <p><a href="${verifyUrl}" class="link">${verifyUrl}</a></p>
+            
+            <p><strong>Please note:</strong> This verification link will expire in 24 hours for security reasons.</p>
+        </div>
         
         <div class="footer">
-            <p>If you didn't create an account with us, please ignore this email.</p>
-            <p>This verification link will expire in 24 hours.</p>
+            <p>If you didn't create an account with Esharebook, please ignore this email.</p>
+            <p>&copy; ${new Date().getFullYear()} Esharebook. All rights reserved.</p>
         </div>
     </div>
 </body>

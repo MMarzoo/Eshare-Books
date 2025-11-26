@@ -25,7 +25,7 @@ export const validateLoginCredentials = asyncHandler(async (req, res, next) => {
         filter.email = email;
     }
 
-    filter.isConfirmed = true
+    // Remove isConfirmed from filter to get the user regardless of confirmation status
     console.log({filter})
     const user = await findOne({ model: userModel, filter });
     console.log({user})
@@ -34,6 +34,10 @@ export const validateLoginCredentials = asyncHandler(async (req, res, next) => {
         return next(new Error("User not found", { cause: 404 }));
     }
 
+    // Check if email is verified
+    if (!user.isConfirmed) {
+        return next(new Error("Please verify your email address before logging in. Check your email for the verification link.", { cause: 401 }));
+    }
     req.user = user;
     next();
 });
