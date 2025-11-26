@@ -17,7 +17,7 @@ import {
 } from "../../validations/category.validation.js";
 
 const categoryRouter = express.Router();
-categoryRouter.use(auth);
+// categoryRouter.use();
 
 // @desc    Get all categories
 // @route   GET /api/categories
@@ -32,6 +32,7 @@ categoryRouter.get("/:id", getCategoryById);
 // @access  Admin only
 categoryRouter.post(
   "/",
+  auth,
   adminCheckmiddelware,
   validationMiddleware(createCategorySchema),
   createCategory
@@ -42,6 +43,7 @@ categoryRouter.post(
 // @access  Admin only
 categoryRouter.put(
   "/:id",
+  auth,
   adminCheckmiddelware,
   validationMiddleware(updateCategorySchema),
   updateCategory
@@ -50,6 +52,6 @@ categoryRouter.put(
 // @desc    delete category
 // @route   DELETE /api/categories/:id
 // @access  Admin only
-categoryRouter.delete("/:id", adminCheckmiddelware, deleteCategory);
+categoryRouter.delete("/:id", auth , adminCheckmiddelware, deleteCategory);
 
 export default categoryRouter;

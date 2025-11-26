@@ -32,7 +32,7 @@ router.post(
 );
 
 //📘 Get All Books
-router.get('/allbooks', auth, getAllBooks);
+router.get('/allbooks', getAllBooks);
 
 // 📘 Get All Books Including Everything (For Admin - includes deleted, sold, donated)
 router.get('/allbooks/admin', auth, adminCheckmiddelware, getAllBooksIncludingAll);
@@ -49,15 +49,15 @@ router.patch('/admin/books/:id/restore', auth, adminCheckmiddelware, adminRestor
 /* ──────────────────────────────
    📘 Get Books by Category ID
 ────────────────────────────── */
-router.get('/category/:categoryId', auth, getBooksByCategory);
+router.get('/category/:categoryId', getBooksByCategory);
 
-router.get('/:id', auth, getBookById);
+router.get('/:id', getBookById);
 
 router.patch('/:id', auth, upload(fileValidation.images).single('image'), updateBook);
 
 router.delete('/:id', auth, deleteBook);
 // 📘 Get Books by Transaction Type
-router.get('/type/:type', auth, getBooksByTransactionType);
+router.get('/type/:type', getBooksByTransactionType);
 
 router.get('/user/:userId', getBooksByUserId);
 
