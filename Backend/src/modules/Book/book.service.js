@@ -489,7 +489,6 @@ export const getBookById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const now = new Date();
 
-  // 1️⃣ لو فيه عملية BUY أو DONATE مكتملة على الكتاب → اعتبره غير موجود
   const soldOrDonatedOp = await Operation.findOne({
     book_dest_id: id,
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
@@ -498,10 +497,9 @@ export const getBookById = asyncHandler(async (req, res) => {
   });
 
   if (soldOrDonatedOp) {
-    throw new AppError('❌ Book not found', 404);
+    throw new AppError("❌ Book not found", 404);
   }
 
-  // 2️⃣ هل فيه عملية BORROW نشطة حاليًا على الكتاب؟
   const activeBorrowOp = await Operation.findOne({
     book_dest_id: id,
     operationType: operationTypeEnum.BORROW,
@@ -520,9 +518,8 @@ export const getBookById = asyncHandler(async (req, res) => {
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name');
 
-  if (!bookDoc) throw new AppError('❌ Book not found', 404);
+  if (!bookDoc) throw new AppError("❌ Book not found", 404);
 
-  // 4️⃣ نضيف فلاغ isBorrowedNow + مدة الاستعارة (لو موجودة)
   const book = bookDoc.toObject();
   book.isBorrowedNow = !!activeBorrowOp;
   book.currentBorrow = activeBorrowOp
@@ -532,8 +529,25 @@ export const getBookById = asyncHandler(async (req, res) => {
       }
     : null;
 
-  res.json({ message: '✅ Book fetched successfully', book });
+  // ✅ NEW: فترات الحجز
+  const reservedBorrows = await Operation.find({
+    book_dest_id: id,
+    operationType: operationTypeEnum.BORROW,
+    isDeleted: false,
+    status: {
+      $in: [
+        operationStatusEnum.PENDING,
+        operationStatusEnum.ACCEPTED,
+        operationStatusEnum.COMPLETED,
+      ],
+    },
+  }).select("startDate endDate status");
+
+  book.reservedBorrows = reservedBorrows;
+
+  res.json({ message: "✅ Book fetched successfully", book });
 });
+
 
 /* ──────────────────────────────
    📘 Update Book
