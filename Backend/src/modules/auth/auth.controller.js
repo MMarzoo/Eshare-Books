@@ -66,15 +66,17 @@ export const verfiyEmail = asyncHandler(async (req, res, next) => {
     let decode = verify({ token: req.params.email, key: process.env.EMAIL_TOKEN_SIGNATURE })
     console.log({ decode })
     if (!decode) {
-        next(new Error("unvalid token", { cause: 401 }))
-        return
+        // Redirect to frontend with error
+        return res.redirect(`${process.env.FRONTEND_URL}/verify-email?success=false&message=Invalid verification token`)
     }
+    
     const findUser = await userModel.findOneAndUpdate({ email: decode.email }, { isConfirmed: true })
     if (!findUser) {
-        next(new Error("User not found", { cause: 400 }))
-        return
+        return res.redirect(`${process.env.FRONTEND_URL}/verify-email?success=false&message=User not found`)
     }
-    successResponce({ res: res, status: 200, message: "Success to verify email", data: findUser })
+    
+    // Redirect to frontend with success
+    return res.redirect(`${process.env.FRONTEND_URL}/verify-email?success=true&message=Email verified successfully`)
 })
 
 

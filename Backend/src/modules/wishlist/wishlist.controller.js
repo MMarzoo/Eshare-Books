@@ -42,7 +42,7 @@ export const getUserWishlist = asyncHandler(async (req, res) => {
   const wishlist = await Wishlist.findOne({ userId: req.user._id })
     .populate({
       path: 'items.bookId',
-      match: { isDeleted: false },
+      match: { isDeleted: false, IsModerated: true },
       select: 'Title Price image TransactionType',
     })
     .lean();

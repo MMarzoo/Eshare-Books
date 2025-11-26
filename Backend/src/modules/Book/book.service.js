@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 // 👇 إضافة موديل العمليات + الـ enums
 import Operation from '../../DB/models/operation.model.js';
 import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
+import categoryModel from '../../DB/models/category.model.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -172,7 +173,7 @@ export const addBook = asyncHandler(async (req, res, next) => {
       categoryId: data.categoryId,
       UserID: userId,
       TransactionType: data.TransactionType,
-      IsModerated: true, 
+      IsModerated: true,
       isDeleted: false,
     };
 
@@ -247,7 +248,7 @@ export const addBook = asyncHandler(async (req, res, next) => {
 export const getAllBooks = asyncHandler(async (req, res, next) => {
   let { title, page = 1, limit = 10 } = req.query;
 
-  const filter = { isDeleted: false };
+  const filter = { isDeleted: false, IsModerated: true };
   if (title) filter.Title = { $regex: title, $options: 'i' };
 
   const pageNum = Number(page) || 1;
@@ -434,6 +435,7 @@ export const getAllBooksIncludingAll = asyncHandler(async (req, res, next) => {
 /* ──────────────────────────────
    📘 Get Books by Category
    - نفس منطق availability + إخفاء الكتب المباعة/المتمدية
+   - Only return books with IsModerated: true
 ────────────────────────────── */
 export const getBooksByCategory = asyncHandler(async (req, res) => {
   const { categoryId } = req.params;
@@ -458,6 +460,7 @@ export const getBooksByCategory = asyncHandler(async (req, res) => {
   const books = await Book.find({
     categoryId,
     isDeleted: false,
+    IsModerated: true, // ⬅️ نضيف الشرط هنا
     _id: { $nin: soldBookIds },
   })
     .populate('UserID', 'firstName secondName email avatar name')
@@ -480,6 +483,7 @@ export const getBooksByCategory = asyncHandler(async (req, res) => {
    📘 Get Book by ID
    - يخفي الكتب اللي اتباعت أو اتمدت (BUY / DONATE + COMPLETED)
    - يعلّم الكتب المستعارة حاليًا بـ isBorrowedNow + currentBorrow
+   - Only return books with IsModerated: true
 ────────────────────────────── */
 export const getBookById = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -505,9 +509,14 @@ export const getBookById = asyncHandler(async (req, res) => {
     endDate: { $gte: now },
   });
 
-  const bookDoc = await Book.findOne({ _id: id, isDeleted: false })
-    .populate("UserID", "firstName secondName email avatar name")
-    .populate("categoryId", "name");
+  // 3️⃣ نجيب الكتاب نفسه مع شرط IsModerated
+  const bookDoc = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+    IsModerated: true, // ⬅️ نضيف الشرط هنا
+  })
+    .populate('UserID', 'firstName secondName email avatar name')
+    .populate('categoryId', 'name');
 
   if (!bookDoc) throw new AppError("❌ Book not found", 404);
 
@@ -647,6 +656,8 @@ export const getBooksByTransactionType = asyncHandler(async (req, res) => {
 
 /* ──────────────────────────────
    📘 Get Books by UserId
+   - Only return books with IsModerated: true
+   - Hide sold/donated books (BUY/DONATE + COMPLETED)
 ────────────────────────────── */
 export const getBooksByUserId = asyncHandler(async (req, res) => {
   const { userId } = req.params;
@@ -655,9 +666,19 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
     throw new AppError('❌ Invalid user ID', 400);
   }
 
+  // 1️⃣ نجيب الـ IDs للكتب اللي اتباعت أو اتمدت (BUY + DONATE مكتملة)
+  const soldOrDonatedBookIds = await Operation.distinct('book_dest_id', {
+    operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+  });
+
+  // 2️⃣ نجيب الكتب مع الفلترة
   const books = await Book.find({
     UserID: userId,
     isDeleted: false,
+    IsModerated: true, // ⬅️ بس الكتب المعمولها moderation
+    _id: { $nin: soldOrDonatedBookIds }, // ⬅️ ما نرجعش الكتب المباعة/المتمدية
   })
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name')
@@ -780,5 +801,116 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     success: true,
     message: 'Book restored successfully by admin',
     restoredBook: { id: book._id, title: book.Title },
+  });
+});
+
+/* ──────────────────────────────
+   👑 Admin: Update Book Category
+   - Returns the complete book with the exact same structure as getBookById
+   - Useful for correcting misclassified books while maintaining response consistency
+────────────────────────────── */
+export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const { categoryId } = req.body;
+
+  // ─────────────────────────────────
+  // 1️⃣ Validate Required Fields
+  // ─────────────────────────────────
+  if (!categoryId) {
+    throw new AppError('❌ categoryId is required', 400);
+  }
+
+  // Validate categoryId format
+  if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    throw new AppError('❌ Invalid category ID format', 400);
+  }
+
+  // ─────────────────────────────────
+  // 2️⃣ Check if Category Exists and Not Deleted
+  // ─────────────────────────────────
+  const category = await categoryModel.findOne({
+    _id: categoryId,
+    isDeleted: false,
+  });
+
+  if (!category) {
+    throw new AppError('❌ Category not found or has been deleted', 404);
+  }
+
+  // ─────────────────────────────────
+  // 3️⃣ Check if Book Exists and Not Deleted
+  // ─────────────────────────────────
+  const book = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+  });
+
+  if (!book) {
+    throw new AppError('❌ Book not found or has been deleted', 404);
+  }
+
+  // ─────────────────────────────────
+  // 4️⃣ Check if Book is Sold or Donated
+  // ─────────────────────────────────
+  const soldOrDonated = await Operation.findOne({
+    book_dest_id: id,
+    operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+  });
+
+  if (soldOrDonated) {
+    throw new AppError('❌ Cannot update category for a book that has been sold or donated', 400);
+  }
+
+  // ─────────────────────────────────
+  // 5️⃣ Update Book Category
+  // ─────────────────────────────────
+  book.categoryId = categoryId;
+  await book.save();
+
+  // ─────────────────────────────────
+  // 6️⃣ Get Updated Book with Same Structure as getBookById
+  // ─────────────────────────────────
+  const now = new Date();
+
+  // Check if there's active borrow operation (same logic as getBookById)
+  const activeBorrowOp = await Operation.findOne({
+    book_dest_id: id,
+    operationType: operationTypeEnum.BORROW,
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+    startDate: { $lte: now },
+    endDate: { $gte: now },
+  });
+
+  // Get the updated book with population (same fields as getBookById)
+  const updatedBook = await Book.findOne({
+    _id: id,
+    isDeleted: false,
+  })
+    .populate('UserID', 'firstName secondName email avatar name fullName')
+    .populate('categoryId', 'name');
+
+  if (!updatedBook) {
+    throw new AppError('❌ Book not found after update', 404);
+  }
+
+  // Convert to object and add the same fields as getBookById
+  const bookResponse = updatedBook.toObject();
+  bookResponse.isBorrowedNow = !!activeBorrowOp;
+  bookResponse.currentBorrow = activeBorrowOp
+    ? {
+        startDate: activeBorrowOp.startDate,
+        endDate: activeBorrowOp.endDate,
+      }
+    : null;
+
+  // ─────────────────────────────────
+  // 7️⃣ Return Success Response (Same Structure as getBookById)
+  // ─────────────────────────────────
+  res.json({
+    message: '✅ Book category updated successfully',
+    book: bookResponse,
   });
 });

@@ -78,42 +78,34 @@ export class NotificationService {
         { new: true }
       );
 
-      // Emit payment-required event
-      const allSockets = [...senderSockets];
-      allSockets.forEach((socketId) => {
-        this.io.to(socketId).emit("payment-required", {
-          operationId: updatedOperation._id,
-          totalPrice: updatedOperation.totalPrice,
-          paymentStatus: updatedOperation.paymentStatus,
-          status: updatedOperation.status,
-          message: "Payment is required to proceed",
+      // check for transactionType for toDonate
+      if (updatedOperation.operationType !== "donate") {
+        // Emit payment-required event
+        senderSockets.forEach((socketId) => {
+          this.io.to(socketId).emit("payment-required", {
+            operationId: updatedOperation._id,
+            totalPrice: updatedOperation.totalPrice,
+            paymentStatus: updatedOperation.paymentStatus,
+            status: updatedOperation.status,
+            message: "Payment is required to proceed",
+          });
         });
-      });
 
-      //Send Payment Notification (user_dest)
-      const buyerSockets = getUserSockets(updatedOperation.user_src);
-      buyerSockets.forEach((socketId) => {
-        this.io.to(socketId).emit("payment-required", {
-          operationId: updatedOperation._id,
+        // Send Payment Notification
+        const buyerSockets = getUserSockets(updatedOperation.user_src);
+        const paymentNotification = {
+          type: "payment",
+          message:
+            "Your book request was accepted. Please proceed with payment.",
+          operationId: updatedOperation._id.toString(),
           totalPrice: updatedOperation.totalPrice,
-          paymentStatus: updatedOperation.paymentStatus,
-          status: updatedOperation.status,
-          message: "Payment is required to proceed",
+          createdAt: new Date().toISOString(),
+        };
+
+        buyerSockets.forEach((socketId) => {
+          this.io.to(socketId).emit("new-notification", paymentNotification);
         });
-      });
-
-      // Send Payment Notification (user_src)
-      const paymentNotification = {
-        type: "payment",
-        message: "Your book request was accepted. Please proceed with payment.",
-        operationID: updatedOperation._id.toString(),
-        amount: updatedOperation.totalPrice,
-        createdAt: new Date().toISOString(),
-      };
-
-      buyerSockets.forEach((socketId) => {
-        this.io.to(socketId).emit("new-notification", paymentNotification);
-      });
+      }
     }
 
     // Notify sender about acceptance
