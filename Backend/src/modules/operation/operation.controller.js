@@ -15,7 +15,6 @@ import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
 import { NotificationInstance } from "../../Gateways/notification.instance.js";
 
-
 // Helper Functions
 const findBookById = async (bookId) => await bookmodel.findById(bookId);
 const findUserById = async (userId) => await userModel.findById(userId);
@@ -156,10 +155,7 @@ export const createOperation = asyncHandler(async (req, res) => {
         400
       );
     } else {
-      throw new AppError(
-        "Borrow duration (dates) is required.",
-        400
-      );
+      throw new AppError("Borrow duration (dates) is required.", 400);
     }
 
     newOperationData.totalPrice = pricePerDay * days;
@@ -177,7 +173,7 @@ export const createOperation = asyncHandler(async (req, res) => {
     fromUserId: user_src,
     toUserId: user_dest,
     invitationType: "operation_request",
-    message: `You have a new ${operationType} request from ${srcUser.firstName} ${srcUser.secondName}`,
+    message: `You have a new ${operationType} request from ${srcUser.firstName} ${srcUser.secondName} on the book "${mainBook.Title}"`,
     metadata: {
       operationId: newOperation._id.toString(),
       bookId: book_dest_id.toString(),
