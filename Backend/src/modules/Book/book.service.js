@@ -497,7 +497,7 @@ export const getBookById = asyncHandler(async (req, res) => {
   });
 
   if (soldOrDonatedOp) {
-    throw new AppError("❌ Book not found", 404);
+    throw new AppError('❌ Book not found', 404);
   }
 
   const activeBorrowOp = await Operation.findOne({
@@ -518,7 +518,7 @@ export const getBookById = asyncHandler(async (req, res) => {
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name');
 
-  if (!bookDoc) throw new AppError("❌ Book not found", 404);
+  if (!bookDoc) throw new AppError('❌ Book not found', 404);
 
   const book = bookDoc.toObject();
   book.isBorrowedNow = !!activeBorrowOp;
@@ -541,43 +541,250 @@ export const getBookById = asyncHandler(async (req, res) => {
         operationStatusEnum.COMPLETED,
       ],
     },
-  }).select("startDate endDate status");
+  }).select('startDate endDate status');
 
   book.reservedBorrows = reservedBorrows;
 
-  res.json({ message: "✅ Book fetched successfully", book });
+  res.json({ message: '✅ Book fetched successfully', book });
 });
 
-
 /* ──────────────────────────────
-   📘 Update Book
+   📘 Update Book (with Gemini AI Moderation)
 ────────────────────────────── */
 export const updateBook = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
+  const data = req.body;
+  let newUploadedImage = null;
 
-  const book = await Book.findOne({ _id: id, isDeleted: false });
-  if (!book) throw new AppError('❌ Book not found', 404);
+  try {
+    // ─────────────────────────────────
+    // 1️⃣ Find Book and Check Permissions
+    // ─────────────────────────────────
+    const book = await Book.findOne({ _id: id, isDeleted: false });
+    if (!book) throw new AppError('❌ Book not found', 404);
 
-  if (book.UserID.toString() !== userId.toString()) {
-    throw new AppError('⛔ Unauthorized to edit this book', 403);
-  }
-
-  if (req.file) {
-    if (book.image?.public_id) {
-      await cloudinary.uploader.destroy(book.image.public_id);
+    if (book.UserID.toString() !== userId.toString()) {
+      throw new AppError('⛔ Unauthorized to edit this book', 403);
     }
-    const upload = await uploadToCloudinary(req.file.buffer, `Books/${userId}/book_${nanoid(6)}`);
-    req.body.image = {
-      secure_url: upload.secure_url,
-      public_id: upload.public_id,
-    };
+
+    // ─────────────────────────────────
+    // 2️⃣ Validate Required Fields if Provided
+    // ─────────────────────────────────
+    if (data.Title !== undefined && (!data.Title || data.Title.trim() === '')) {
+      throw new AppError('❌ Title cannot be empty', 400);
+    }
+
+    if (data.TransactionType !== undefined) {
+      const validTransactionTypes = ['toSale', 'toBorrow', 'toExchange', 'toDonate'];
+      if (!validTransactionTypes.includes(data.TransactionType)) {
+        throw new AppError(
+          `❌ Invalid transaction type. Must be one of: ${validTransactionTypes.join(', ')}`,
+          400
+        );
+      }
+
+      // Validate Price for toSale
+      if (data.TransactionType === 'toSale' && (!data.Price || data.Price < 1)) {
+        throw new AppError(
+          '❌ Price is required and must be at least 1 for sale transactions',
+          400
+        );
+      }
+    }
+
+    // ─────────────────────────────────
+    // 3️⃣ Moderate Text Content (Title + Description) if Provided
+    // ─────────────────────────────────
+    if (data.Title !== undefined || data.Description !== undefined) {
+      console.log('🔍 Step 1: Moderating updated text content...');
+
+      const currentTitle = data.Title !== undefined ? data.Title : book.Title;
+      const currentDescription =
+        data.Description !== undefined ? data.Description : book.Description;
+
+      const textToModerate = `${currentTitle || ''}\n${currentDescription || ''}`.trim();
+
+      if (textToModerate) {
+        const textModeration = await moderateText(textToModerate);
+
+        console.log('📝 Text moderation result:', textModeration);
+
+        if (textModeration.flagged) {
+          return res.status(400).json({
+            success: false,
+            message: `🚫 Update rejected: ${
+              textModeration.reason || 'Text contains inappropriate content'
+            }`,
+            details: {
+              source: textModeration.source,
+              type: 'text_violation',
+            },
+          });
+        }
+
+        console.log('✅ Text moderation passed');
+      }
+    }
+
+    // ─────────────────────────────────
+    // 4️⃣ Upload and Moderate New Image (if provided)
+    // ─────────────────────────────────
+    if (req.file) {
+      console.log('🖼️ Step 2: Processing and moderating new image...');
+
+      try {
+        // Delete old image if exists
+        if (book.image?.public_id) {
+          await deleteFromCloudinary(book.image.public_id);
+          console.log('🗑️ Old image deleted from Cloudinary');
+        }
+
+        // Upload new image to Cloudinary
+        const folderPath = `Books/${userId}/book_${book._id}`;
+        const upload = await uploadToCloudinary(req.file.buffer, folderPath);
+
+        newUploadedImage = {
+          secure_url: upload.secure_url,
+          public_id: upload.public_id,
+        };
+
+        console.log('☁️ New image uploaded to Cloudinary:', newUploadedImage.public_id);
+
+        // Moderate the new image
+        console.log('🔍 Moderating new image content...');
+        const imageModeration = await moderateImage(newUploadedImage.secure_url);
+
+        console.log('🖼️ Image moderation result:', imageModeration);
+
+        if (!imageModeration.safe) {
+          // Delete flagged image from Cloudinary
+          console.log('🗑️ Deleting inappropriate image from Cloudinary...');
+          await deleteFromCloudinary(newUploadedImage.public_id);
+
+          return res.status(400).json({
+            success: false,
+            message: `🚫 Update rejected: ${
+              imageModeration.reason || 'Image contains inappropriate content'
+            }`,
+            details: {
+              source: imageModeration.source,
+              type: 'image_violation',
+            },
+          });
+        }
+
+        // Add the moderated image to update data
+        data.image = newUploadedImage;
+        console.log('✅ Image moderation passed');
+      } catch (imageError) {
+        console.error('❌ Image processing error:', imageError);
+
+        // Cleanup uploaded image if error occurs
+        if (newUploadedImage?.public_id) {
+          try {
+            await deleteFromCloudinary(newUploadedImage.public_id);
+            console.log('🗑️ Cleaned up new image after error');
+          } catch (cleanupError) {
+            console.error('Failed to cleanup image:', cleanupError);
+          }
+        }
+
+        throw new AppError('❌ Failed to process image. Please try again.', 500);
+      }
+    } else {
+      console.log('ℹ️ No new image provided, skipping image moderation');
+    }
+
+    // ─────────────────────────────────
+    // 5️⃣ Prepare Update Data
+    // ─────────────────────────────────
+    console.log('💾 Step 3: Preparing update data...');
+
+    const updateData = { ...data };
+
+    // Trim text fields if provided
+    if (updateData.Title !== undefined) {
+      updateData.Title = updateData.Title.trim();
+    }
+    if (updateData.Description !== undefined) {
+      updateData.Description = updateData.Description.trim() || '';
+    }
+
+    // Handle Price and PricePerDay based on TransactionType
+    if (updateData.TransactionType === 'toSale') {
+      updateData.Price = updateData.Price ? parseFloat(updateData.Price) : book.Price;
+      updateData.PricePerDay = undefined; // Clear borrow pricing
+    } else if (updateData.TransactionType === 'toBorrow') {
+      updateData.PricePerDay = updateData.PricePerDay
+        ? parseFloat(updateData.PricePerDay)
+        : book.PricePerDay;
+      updateData.Price = undefined; // Clear sale pricing
+    } else {
+      // For exchange/donate, clear pricing fields
+      updateData.Price = undefined;
+      updateData.PricePerDay = undefined;
+    }
+
+    // Mark as moderated since it passed AI checks
+    updateData.IsModerated = true;
+
+    // ─────────────────────────────────
+    // 6️⃣ Update Book in Database
+    // ─────────────────────────────────
+    console.log('🔄 Step 4: Updating book in database...');
+
+    const updatedBook = await Book.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+    })
+      .populate('UserID', 'firstName secondName email avatar name')
+      .populate('categoryId', 'name');
+
+    if (!updatedBook) {
+      throw new AppError('❌ Failed to update book', 500);
+    }
+
+    console.log('✅ Book updated successfully:', updatedBook._id);
+
+    // ─────────────────────────────────
+    // 7️⃣ Return Success Response
+    // ─────────────────────────────────
+    res.json({
+      success: true,
+      message: '✅ Book updated successfully (AI Approved)',
+      book: {
+        _id: updatedBook._id,
+        Title: updatedBook.Title,
+        Description: updatedBook.Description,
+        categoryId: updatedBook.categoryId,
+        TransactionType: updatedBook.TransactionType,
+        Price: updatedBook.Price,
+        PricePerDay: updatedBook.PricePerDay,
+        image: updatedBook.image,
+        IsModerated: updatedBook.IsModerated,
+        UserID: updatedBook.UserID,
+        createdAt: updatedBook.createdAt,
+        updatedAt: updatedBook.updatedAt,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error updating book:', error);
+
+    // Cleanup uploaded image on any error
+    if (newUploadedImage?.public_id) {
+      try {
+        await deleteFromCloudinary(newUploadedImage.public_id);
+        console.log('🗑️ Cleaned up new image after error');
+      } catch (cleanupError) {
+        console.error('Failed to cleanup image:', cleanupError);
+      }
+    }
+
+    // Pass to error handler middleware
+    next(error);
   }
-
-  const updatedBook = await Book.findByIdAndUpdate(id, req.body, { new: true });
-  res.json({ message: '✅ Book updated successfully', book: updatedBook });
 });
-
 /* ──────────────────────────────
    📘 Soft Delete Book
 ────────────────────────────── */
