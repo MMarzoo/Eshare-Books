@@ -1,37 +1,40 @@
-import express from "express";
+import express from 'express';
+import { adminCheckmiddelware, auth } from '../../middelwares/auth.middleware.js';
 import {
-  adminCheckmiddelware,
-  auth,
-} from "../../middelwares/auth.middleware.js";
-import {
+  adminRestoreCategory,
   createCategory,
   deleteCategory,
   getAllCategories,
+  getAllCategoriesForAdmin,
   getCategoryById,
   updateCategory,
-} from "./category.controller.js";
-import { validationMiddleware } from "../../middelwares/category.middleware.js";
+} from './category.controller.js';
+import { validationMiddleware } from '../../middelwares/category.middleware.js';
 import {
   createCategorySchema,
   updateCategorySchema,
-} from "../../validations/category.validation.js";
+} from '../../validations/category.validation.js';
 
 const categoryRouter = express.Router();
 // categoryRouter.use();
 
 // @desc    Get all categories
 // @route   GET /api/categories
-categoryRouter.get("/", getAllCategories);
+categoryRouter.get('/', getAllCategories);
+
+// @desc    Get all categories for admin (including deleted)
+// @route   GET /api/admin/categories
+categoryRouter.get('/admin', auth, adminCheckmiddelware, getAllCategoriesForAdmin);
 
 // @desc    Get category by id
 // @route   GET /api/categories/:id
-categoryRouter.get("/:id", getCategoryById);
+categoryRouter.get('/:id', getCategoryById);
 
 // @desc    Create category
 // @route   POST /api/categories
 // @access  Admin only
 categoryRouter.post(
-  "/",
+  '/',
   auth,
   adminCheckmiddelware,
   validationMiddleware(createCategorySchema),
@@ -42,7 +45,7 @@ categoryRouter.post(
 // @route   PUT /api/categories/:id
 // @access  Admin only
 categoryRouter.put(
-  "/:id",
+  '/:id',
   auth,
   adminCheckmiddelware,
   validationMiddleware(updateCategorySchema),
@@ -52,6 +55,16 @@ categoryRouter.put(
 // @desc    delete category
 // @route   DELETE /api/categories/:id
 // @access  Admin only
-categoryRouter.delete("/:id", auth , adminCheckmiddelware, deleteCategory);
+categoryRouter.delete('/:id', auth, adminCheckmiddelware, deleteCategory);
+
+// @desc    Restore deleted category
+// @route   PATCH /api/admin/categories/:id/restore
+// @access  Admin only
+categoryRouter.patch(
+  '/admin/categories/:id/restore',
+  auth,
+  adminCheckmiddelware,
+  adminRestoreCategory
+);
 
 export default categoryRouter;

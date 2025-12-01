@@ -903,6 +903,7 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
    👑 Admin: Delete Any Book
    - Allows admin to delete any book regardless of owner
    - Uses soft delete to maintain records
+   - Cancels any active operations for this book including completed borrows
 ────────────────────────────── */
 export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -912,17 +913,98 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Book not found', 404);
   }
 
-  // Soft delete the book
+  const currentDate = new Date();
+  let cancelledOperations = 0;
+  let terminatedBorrows = 0;
+
+  // ─────────────────────────────────
+  // 1️⃣ Check for Active Operations (Pending/Accepted) and Cancel Them
+  // ─────────────────────────────────
+  const activeOperations = await Operation.find({
+    book_dest_id: id,
+    status: {
+      $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED],
+    },
+    isDeleted: false,
+  });
+
+  if (activeOperations.length > 0) {
+    // Cancel all active operations for this book
+    await Operation.updateMany(
+      {
+        book_dest_id: id,
+        status: {
+          $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED],
+        },
+        isDeleted: false,
+      },
+      {
+        $set: {
+          status: operationStatusEnum.REJECTED,
+          isDeleted: true,
+        },
+      }
+    );
+
+    cancelledOperations = activeOperations.length;
+    console.log(`✅ Cancelled ${cancelledOperations} active operations for book ${id}`);
+  }
+
+  // ─────────────────────────────────
+  // 2️⃣ Check for Completed Borrow Operations That Are Still Active
+  // ─────────────────────────────────
+  const activeBorrows = await Operation.find({
+    book_dest_id: id,
+    operationType: operationTypeEnum.BORROW,
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+    startDate: { $lte: currentDate },
+    endDate: { $gte: currentDate },
+  });
+
+  if (activeBorrows.length > 0) {
+    // For completed borrows that are currently active, mark as returned
+    await Operation.updateMany(
+      {
+        book_dest_id: id,
+        operationType: operationTypeEnum.BORROW,
+        status: operationStatusEnum.COMPLETED,
+        isDeleted: false,
+        startDate: { $lte: currentDate },
+        endDate: { $gte: currentDate },
+      },
+      {
+        $set: {
+          endDate: currentDate, // Set end date to now (early return)
+          isDeleted: true,
+        },
+      }
+    );
+
+    terminatedBorrows = activeBorrows.length;
+    console.log(`✅ Terminated ${terminatedBorrows} active borrows for book ${id}`);
+  }
+
+  // ─────────────────────────────────
+  // 3️⃣ Soft Delete the Book
+  // ─────────────────────────────────
   book.isDeleted = true;
   await book.save();
 
+  const totalCancelled = cancelledOperations + terminatedBorrows;
+
   res.json({
     success: true,
-    message: '✅ Book deleted successfully by admin',
+    message: `✅ Book deleted successfully by admin${
+      totalCancelled > 0 ? ` (${totalCancelled} operations were cancelled)` : ''
+    }`,
     deletedBook: {
       id: book._id,
       title: book.Title,
       deletedBy: req.user._id,
+      cancelledOperations: cancelledOperations,
+      terminatedBorrows: terminatedBorrows,
+      totalCancelled: totalCancelled,
     },
   });
 });
@@ -972,6 +1054,7 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
    👑 Admin: Restore Deleted Book
    - Allows admin to restore any soft-deleted book
    - Useful for recovering accidentally deleted books
+   - Prevents restoration if book's category no longer exists
 ────────────────────────────── */
 export const adminRestoreBook = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -986,7 +1069,33 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // ممنوع ترستور كتاب اتباع أو اتمدى
+  // Check if book's category still exists and is not deleted
+  const category = await categoryModel.findOne({
+    _id: book.categoryId,
+    isDeleted: false,
+  });
+
+  if (!category) {
+    // Get category name for better error message
+    const deletedCategory = await categoryModel.findOne({
+      _id: book.categoryId,
+    });
+
+    const categoryName = deletedCategory ? deletedCategory.name : 'Unknown Category';
+
+    return res.status(400).json({
+      success: false,
+      message: `Cannot restore book. The book was added to "${categoryName}" category which no longer exists.`,
+      details: {
+        originalCategory: {
+          id: book.categoryId,
+          name: categoryName,
+        },
+      },
+    });
+  }
+
+  // Prevent restoration of sold or donated books
   const soldOrDonated = await Operation.findOne({
     book_dest_id: id,
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
@@ -1001,13 +1110,21 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
+  // Restore the book
   book.isDeleted = false;
   await book.save();
 
   res.json({
     success: true,
     message: 'Book restored successfully by admin',
-    restoredBook: { id: book._id, title: book.Title },
+    restoredBook: {
+      id: book._id,
+      title: book.Title,
+      category: {
+        id: category._id,
+        name: category.name,
+      },
+    },
   });
 });
 
@@ -1045,29 +1162,31 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
   }
 
   // ─────────────────────────────────
-  // 3️⃣ Check if Book Exists and Not Deleted
+  // 3️⃣ Check if Book Exists (REMOVED isDeleted check)
   // ─────────────────────────────────
   const book = await Book.findOne({
     _id: id,
-    isDeleted: false,
+    // Removed: isDeleted: false, - Now allows updating category for deleted books
   });
 
   if (!book) {
-    throw new AppError('❌ Book not found or has been deleted', 404);
+    throw new AppError('❌ Book not found', 404);
   }
 
   // ─────────────────────────────────
-  // 4️⃣ Check if Book is Sold or Donated
+  // 4️⃣ Check if Book is Sold or Donated (ONLY for non-deleted books)
   // ─────────────────────────────────
-  const soldOrDonated = await Operation.findOne({
-    book_dest_id: id,
-    operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-  });
+  if (!book.isDeleted) {
+    const soldOrDonated = await Operation.findOne({
+      book_dest_id: id,
+      operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+    });
 
-  if (soldOrDonated) {
-    throw new AppError('❌ Cannot update category for a book that has been sold or donated', 400);
+    if (soldOrDonated) {
+      throw new AppError('❌ Cannot update category for a book that has been sold or donated', 400);
+    }
   }
 
   // ─────────────────────────────────
@@ -1094,7 +1213,7 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
   // Get the updated book with population (same fields as getBookById)
   const updatedBook = await Book.findOne({
     _id: id,
-    isDeleted: false,
+    // Removed: isDeleted: false, - Now returns deleted books as well
   })
     .populate('UserID', 'firstName secondName email avatar name fullName')
     .populate('categoryId', 'name');
