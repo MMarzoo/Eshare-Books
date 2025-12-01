@@ -9,11 +9,12 @@ import {
   validateBookTransactionType,
   validateDuplicateOperation,
   validateOperationOwnership,
-  validateBorrowAvailability, // ✅ NEW
+  validateBorrowAvailability,
 } from "./operationValidation.service.js";
 import { successResponce } from "../../utils/Response.js";
 import { AppError } from "../../utils/AppError.js";
 import { NotificationInstance } from "../../Gateways/notification.instance.js";
+import { getUserSockets } from "../../middelwares/socket.auth.middleware.js";
 
 // Helper Functions
 const findBookById = async (bookId) => await bookmodel.findById(bookId);
@@ -37,7 +38,6 @@ export const getAllOperation = asyncHandler(async (req, res) => {
   });
 });
 
-// ----------------------------------------------------------------------
 // @desc    Create new operation (buy / exchange / borrow / donate)
 // @route   POST /api/operations
 export const createOperation = asyncHandler(async (req, res) => {
@@ -112,7 +112,7 @@ export const createOperation = asyncHandler(async (req, res) => {
     newOperationData.book_src_id = book_src_id;
   }
 
-  // ---------------- ✅ BORROW VALIDATION + TOTAL PRICE ----------------
+  // BORROW VALIDATION + TOTAL PRICE
   if (operationType === "borrow") {
     let days = 0;
     const pricePerDay = Number(mainBook.PricePerDay) || 0;
@@ -135,7 +135,6 @@ export const createOperation = asyncHandler(async (req, res) => {
         throw new AppError("End date must be after start date.", 400);
       }
 
-      // ✅ NEW: منع تداخل فترات الحجز
       await validateBorrowAvailability({
         bookId: book_dest_id,
         startDate,
@@ -149,7 +148,6 @@ export const createOperation = asyncHandler(async (req, res) => {
       newOperationData.endDate = endDate;
       newOperationData.numberOfDays = days;
     } else if (numberOfDays) {
-      // ⚠️ لازم تاريخين عشان نعرف نمنع التداخل
       throw new AppError(
         "Start & end dates are required to check availability.",
         400
@@ -161,7 +159,7 @@ export const createOperation = asyncHandler(async (req, res) => {
     newOperationData.totalPrice = pricePerDay * days;
   }
 
-  // ---------------- BUY TOTAL PRICE ----------------
+  // BUY TOTAL PRICE
   if (operationType === "buy") {
     const bookPrice = Number(mainBook.Price) || 0;
     newOperationData.totalPrice = bookPrice;
@@ -195,23 +193,24 @@ export const updateOperation = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const value = req.validatedBody;
 
-  const updated = await findByIdAndUpdate({
-    model: operationModel,
-    id,
-    data: value,
-    options: { new: true },
-  });
+  // Populate all important fields before notifications
+  const updated = await operationModel
+    .findByIdAndUpdate(id, value, { new: true })
+    .populate("book_dest_id", "Title Price")
+    .populate("user_dest", "_id firstName secondName email")
+    .populate("user_src", "_id firstName secondName email");
 
   if (!updated) {
     throw new AppError("Operation not found.", 404);
   }
 
-  if (value.status === "completed") {
+  // Notification when operation is completed but payment is still pending
+  if (updated.status === "completed" && updated.paymentStatus === "pending") {
     await NotificationInstance.send({
       fromUserId: req.user._id,
-      toUserId: updated.user_src.toString(),
+      toUserId: updated.user_dest?._id?.toString(),
       invitationType: "payment_required",
-      message: `Your ${updated.operationType} request has been accepted. Complete payment now.`,
+      message: `Your ${updated.operationType} request for the book "${updated.book_dest_id?.Title}" has been accepted. Please complete payment.`,
       type: "payment",
       metadata: {
         operationID: updated._id.toString(),
@@ -219,6 +218,10 @@ export const updateOperation = asyncHandler(async (req, res) => {
       },
     });
   }
+
+  // ✅ Notification when payment is completed
+  // Note: This is handled by the webhook, not here
+  // The webhook will send notifications to both seller and buyer
 
   return successResponce({
     res,

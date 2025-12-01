@@ -234,37 +234,61 @@ export class NotificationService {
 
   // ✅ NEW: SEND PAYMENT RECEIVED NOTIFICATION (for both seller and buyer)
   async sendPaymentReceivedNotification(sellerId, buyerId, operation) {
+    console.log("🔔 sendPaymentReceivedNotification called:", {
+      sellerId: sellerId?.toString(),
+      buyerId: buyerId?.toString(),
+      operationId: operation._id?.toString(),
+    });
+
     // Notification for book owner (seller - user_dest)
     const sellerSockets = getUserSockets(sellerId);
+    console.log(`📡 Seller sockets found: ${sellerSockets.length}`);
+
     const sellerNotification = {
       type: "payment-received",
       message: `Payment of ${operation.totalPrice} EGP received for your book`,
       operationId: operation._id.toString(),
       amount: operation.totalPrice,
-      bookId: operation.book?.toString() || null,
+      bookId:
+        operation.book_dest_id?._id?.toString() ||
+        operation.book_dest_id?.toString() ||
+        null,
+      bookTitle: operation.book_dest_id?.Title || "Unknown Book",
       createdAt: new Date().toISOString(),
     };
 
     sellerSockets.forEach((socketId) => {
-      this.io.to(socketId).emit("new-notification", sellerNotification);
+      console.log(`📤 Emitting payment-received to seller socket: ${socketId}`);
+      // ✅ Send specific event instead of generic "new-notification"
+      this.io.to(socketId).emit("payment-received", sellerNotification);
     });
 
     // Notification for buyer (user_src)
     const buyerSockets = getUserSockets(buyerId);
+    console.log(`📡 Buyer sockets found: ${buyerSockets.length}`);
+
     const buyerNotification = {
       type: "payment-success",
       message: "Your payment was completed successfully. Thank you!",
       operationId: operation._id.toString(),
       amount: operation.totalPrice,
-      bookId: operation.book?.toString() || null,
+      bookId:
+        operation.book_dest_id?._id?.toString() ||
+        operation.book_dest_id?.toString() ||
+        null,
+      bookTitle: operation.book_dest_id?.Title || "Unknown Book",
       createdAt: new Date().toISOString(),
     };
 
     buyerSockets.forEach((socketId) => {
-      this.io.to(socketId).emit("new-notification", buyerNotification);
+      console.log(`📤 Emitting payment-success to buyer socket: ${socketId}`);
+      // ✅ Send specific event instead of generic "new-notification"
+      this.io.to(socketId).emit("payment-success", buyerNotification);
     });
 
-    console.log(`Payment notifications sent - Seller: ${sellerId}, Buyer: ${buyerId}`);
+    console.log(
+      `✅ Payment notifications sent - Seller: ${sellerId}, Buyer: ${buyerId}`
+    );
   }
 
   // SEND PAYMENT SUCCESS NOTIFICATION (original function - kept for backwards compatibility)

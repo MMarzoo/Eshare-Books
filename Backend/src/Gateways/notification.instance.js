@@ -12,8 +12,17 @@ export const NotificationInstance = {
   },
 
   // ✅ NEW: Send payment received notification to both seller and buyer
-  sendPaymentReceivedNotification: (sellerId, buyerId, operation) => {
+  sendPaymentReceivedNotification: (operation) => {
     const service = getNotificationService();
+
+    const sellerId = operation?.user_dest?.toString();
+    const buyerId = operation?.user_src?.toString();
+
+    if (!sellerId || !buyerId) {
+      console.error("❌ Missing sellerId or buyerId in operation");
+      return;
+    }
+
     return service.sendPaymentReceivedNotification(
       sellerId,
       buyerId,
