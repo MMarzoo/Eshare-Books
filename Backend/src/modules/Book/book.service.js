@@ -11,6 +11,8 @@ import mongoose from 'mongoose';
 import Operation from '../../DB/models/operation.model.js';
 import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import categoryModel from '../../DB/models/category.model.js';
+import userModel from '../../DB/models/User.model.js';
+import bookmodel from '../../DB/models/bookmodel.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -1051,10 +1053,12 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
 });
 
 /* ──────────────────────────────
-   👑 Admin: Restore Deleted Book
+   👑 Admin: Restore Deleted Book (Enhanced)
    - Allows admin to restore any soft-deleted book
    - Useful for recovering accidentally deleted books
    - Prevents restoration if book's category no longer exists
+   - Prevents restoration if book owner no longer exists
+   - Checks for active borrow operations
 ────────────────────────────── */
 export const adminRestoreBook = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -1066,6 +1070,19 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     return res.status(400).json({
       success: false,
       message: 'Book is not deleted',
+    });
+  }
+
+  // Check if book owner (user) still exists
+  const user = await userModel.findById(book.UserID);
+
+  if (!user) {
+    return res.status(400).json({
+      success: false,
+      message: 'Cannot restore book. The book owner no longer exists in the system.',
+      details: {
+        originalOwnerId: book.UserID,
+      },
     });
   }
 
@@ -1095,6 +1112,30 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
+  // Check if there's an active borrow operation for this book
+  const currentDate = new Date();
+  const activeBorrow = await Operation.findOne({
+    book_dest_id: id,
+    operationType: operationTypeEnum.BORROW,
+    status: operationStatusEnum.COMPLETED,
+    isDeleted: false,
+    startDate: { $lte: currentDate },
+    endDate: { $gte: currentDate },
+  });
+
+  if (activeBorrow) {
+    return res.status(400).json({
+      success: false,
+      message: 'Cannot restore book. There is an active borrow operation for this book.',
+      details: {
+        borrowId: activeBorrow._id,
+        borrowerId: activeBorrow.user_id,
+        startDate: activeBorrow.startDate,
+        endDate: activeBorrow.endDate,
+      },
+    });
+  }
+
   // Prevent restoration of sold or donated books
   const soldOrDonated = await Operation.findOne({
     book_dest_id: id,
@@ -1120,6 +1161,11 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     restoredBook: {
       id: book._id,
       title: book.Title,
+      owner: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+      },
       category: {
         id: category._id,
         name: category.name,
