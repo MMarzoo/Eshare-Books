@@ -10,4 +10,20 @@ export const NotificationInstance = {
     const service = getNotificationService();
     return service.emitToUser(userId, event, payload);
   },
+
+  // ✅ NEW: Send payment received notification to both seller and buyer
+  sendPaymentReceivedNotification: (sellerId, buyerId, operation) => {
+    const service = getNotificationService();
+    return service.sendPaymentReceivedNotification(
+      sellerId,
+      buyerId,
+      operation
+    );
+  },
+
+  // ✅ NEW: Send payment success notification (backwards compatibility)
+  sendPaymentSuccessNotification: (userId, operation) => {
+    const service = getNotificationService();
+    return service.sendPaymentSuccessNotification(userId, operation);
+  },
 };

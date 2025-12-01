@@ -8,7 +8,6 @@ export class NotificationService {
   }
 
   // SEND INVITATION
-
   async sendInvitation(data) {
     const { fromUserId, toUserId, transactionType, message, metadata } = data;
 
@@ -134,7 +133,6 @@ export class NotificationService {
   }
 
   // REFUSE INVITATION
-
   async refuseInvitation(invitationId, userId, reason, operationId = null) {
     const key = userId.toString();
     const invitation = this.findInvitation(invitationId, key);
@@ -156,7 +154,6 @@ export class NotificationService {
     const recipientSockets = getUserSockets(userId);
 
     // Update DB → rejected
-
     if (finalOperationId) {
       const updatedOperation = await operationModel.findByIdAndUpdate(
         finalOperationId,
@@ -235,14 +232,49 @@ export class NotificationService {
     };
   }
 
-  // SEND PAYMENT SUCCESS NOTIFICATION
+  // ✅ NEW: SEND PAYMENT RECEIVED NOTIFICATION (for both seller and buyer)
+  async sendPaymentReceivedNotification(sellerId, buyerId, operation) {
+    // Notification for book owner (seller - user_dest)
+    const sellerSockets = getUserSockets(sellerId);
+    const sellerNotification = {
+      type: "payment-received",
+      message: `Payment of ${operation.totalPrice} EGP received for your book`,
+      operationId: operation._id.toString(),
+      amount: operation.totalPrice,
+      bookId: operation.book?.toString() || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    sellerSockets.forEach((socketId) => {
+      this.io.to(socketId).emit("new-notification", sellerNotification);
+    });
+
+    // Notification for buyer (user_src)
+    const buyerSockets = getUserSockets(buyerId);
+    const buyerNotification = {
+      type: "payment-success",
+      message: "Your payment was completed successfully. Thank you!",
+      operationId: operation._id.toString(),
+      amount: operation.totalPrice,
+      bookId: operation.book?.toString() || null,
+      createdAt: new Date().toISOString(),
+    };
+
+    buyerSockets.forEach((socketId) => {
+      this.io.to(socketId).emit("new-notification", buyerNotification);
+    });
+
+    console.log(`Payment notifications sent - Seller: ${sellerId}, Buyer: ${buyerId}`);
+  }
+
+  // SEND PAYMENT SUCCESS NOTIFICATION (original function - kept for backwards compatibility)
   async sendPaymentSuccessNotification(userId, operation) {
     const recipientSockets = getUserSockets(userId);
 
     const successNotification = {
       type: "payment-success",
       message: "Your payment was completed successfully.",
-      operationID: operation._id.toString(),
+      operationId: operation._id.toString(),
       amount: operation.totalPrice,
       createdAt: new Date().toISOString(),
     };
