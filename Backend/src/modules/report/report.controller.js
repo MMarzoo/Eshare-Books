@@ -6,6 +6,7 @@ import { findManyNonDeleted, restoreSoftDelete, softDelete } from '../../DB/db.s
 import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import Book from '../../DB/models/bookmodel.js';
 import operationModel from '../../DB/models/operation.model.js';
+import userModel from '../../DB/models/User.model.js';
 
 /**
  * دالة مساعدة لحذف الكتاب عند 3 إبلاغات
@@ -80,6 +81,240 @@ const deleteBookDueToReports = async (bookId) => {
 };
 
 /**
+ * دالة مساعدة لحذف المستخدم عند 3 إبلاغات مؤكدة
+ * تشبه تماماً منطق حذف الكتاب مع بعض التعديلات
+ */
+const deleteUserDueToReports = async (userId) => {
+  try {
+    const user = await userModel.findOne({ _id: userId });
+
+    if (!user) {
+      return { success: false, message: 'User not found' };
+    }
+
+    const currentDate = new Date();
+    let deletedBooks = 0;
+    let cancelledOperations = 0;
+    let terminatedBorrows = 0;
+
+    console.log(`🚨 Starting auto-deletion for user ${userId} due to 3 reviewed reports`);
+
+    // 1️⃣ حذف جميع كتب المستخدم (Soft Delete) وإلغاء عملياتها
+    const userBooks = await Book.find({
+      UserID: userId,
+      isDeleted: false,
+    });
+
+    if (userBooks.length > 0) {
+      // تحديث جميع كتب المستخدم إلى محذوفة
+      await Book.updateMany({ UserID: userId, isDeleted: false }, { $set: { isDeleted: true } });
+      deletedBooks = userBooks.length;
+      console.log(`📚 Deleted ${deletedBooks} books for user ${userId}`);
+
+      // جمع IDs جميع كتب المستخدم
+      const userBookIds = userBooks.map((book) => book._id);
+
+      // إلغاء العمليات النشطة لكتب المستخدم
+      const activeBookOperations = await operationModel.find({
+        book_dest_id: { $in: userBookIds },
+        status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+        isDeleted: false,
+      });
+
+      if (activeBookOperations.length > 0) {
+        await operationModel.updateMany(
+          {
+            book_dest_id: { $in: userBookIds },
+            status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+            isDeleted: false,
+          },
+          {
+            $set: {
+              status: operationStatusEnum.REJECTED,
+              isDeleted: true,
+            },
+          }
+        );
+        cancelledOperations += activeBookOperations.length;
+        console.log(
+          `❌ Cancelled ${activeBookOperations.length} active operations for user's books`
+        );
+      }
+
+      // إنهاء عمليات الاستعارة النشطة لكتب المستخدم
+      const activeBookBorrows = await operationModel.find({
+        book_dest_id: { $in: userBookIds },
+        operationType: operationTypeEnum.BORROW,
+        status: operationStatusEnum.COMPLETED,
+        isDeleted: false,
+        startDate: { $lte: currentDate },
+        endDate: { $gte: currentDate },
+      });
+
+      if (activeBookBorrows.length > 0) {
+        await operationModel.updateMany(
+          {
+            book_dest_id: { $in: userBookIds },
+            operationType: operationTypeEnum.BORROW,
+            status: operationStatusEnum.COMPLETED,
+            isDeleted: false,
+            startDate: { $lte: currentDate },
+            endDate: { $gte: currentDate },
+          },
+          {
+            $set: {
+              endDate: currentDate,
+              isDeleted: true,
+            },
+          }
+        );
+        terminatedBorrows += activeBookBorrows.length;
+        console.log(`🔄 Terminated ${activeBookBorrows.length} active borrows for user's books`);
+      }
+    }
+
+    // 2️⃣ إلغاء العمليات النشطة التي يكون المستخدم طرفاً فيها كمصدر (user_src)
+    const activeSrcOperations = await operationModel.find({
+      user_src: userId,
+      status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+      isDeleted: false,
+    });
+
+    if (activeSrcOperations.length > 0) {
+      await operationModel.updateMany(
+        {
+          user_src: userId,
+          status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+          isDeleted: false,
+        },
+        {
+          $set: {
+            status: operationStatusEnum.REJECTED,
+            isDeleted: true,
+          },
+        }
+      );
+      cancelledOperations += activeSrcOperations.length;
+      console.log(`❌ Cancelled ${activeSrcOperations.length} operations where user is source`);
+    }
+
+    // 3️⃣ إلغاء العمليات النشطة التي يكون المستخدم طرفاً فيها كهدف (user_dest)
+    const activeDestOperations = await operationModel.find({
+      user_dest: userId,
+      status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+      isDeleted: false,
+    });
+
+    if (activeDestOperations.length > 0) {
+      await operationModel.updateMany(
+        {
+          user_dest: userId,
+          status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+          isDeleted: false,
+        },
+        {
+          $set: {
+            status: operationStatusEnum.REJECTED,
+            isDeleted: true,
+          },
+        }
+      );
+      cancelledOperations += activeDestOperations.length;
+      console.log(
+        `❌ Cancelled ${activeDestOperations.length} operations where user is destination`
+      );
+    }
+
+    // 4️⃣ إنهاء عمليات الاستعارة النشطة حيث المستخدم هو المقترض (user_src)
+    const activeSrcBorrows = await operationModel.find({
+      user_src: userId,
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: currentDate },
+      endDate: { $gte: currentDate },
+    });
+
+    if (activeSrcBorrows.length > 0) {
+      await operationModel.updateMany(
+        {
+          user_src: userId,
+          operationType: operationTypeEnum.BORROW,
+          status: operationStatusEnum.COMPLETED,
+          isDeleted: false,
+          startDate: { $lte: currentDate },
+          endDate: { $gte: currentDate },
+        },
+        {
+          $set: {
+            endDate: currentDate,
+            isDeleted: true,
+          },
+        }
+      );
+      terminatedBorrows += activeSrcBorrows.length;
+      console.log(`🔄 Terminated ${activeSrcBorrows.length} active borrows where user is borrower`);
+    }
+
+    // 5️⃣ إنهاء عمليات الاستعارة النشطة حيث المستخدم هو مالك الكتاب (user_dest)
+    const activeDestBorrows = await operationModel.find({
+      user_dest: userId,
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: currentDate },
+      endDate: { $gte: currentDate },
+    });
+
+    if (activeDestBorrows.length > 0) {
+      await operationModel.updateMany(
+        {
+          user_dest: userId,
+          operationType: operationTypeEnum.BORROW,
+          status: operationStatusEnum.COMPLETED,
+          isDeleted: false,
+          startDate: { $lte: currentDate },
+          endDate: { $gte: currentDate },
+        },
+        {
+          $set: {
+            endDate: currentDate,
+            isDeleted: true,
+          },
+        }
+      );
+      terminatedBorrows += activeDestBorrows.length;
+      console.log(
+        `🔄 Terminated ${activeDestBorrows.length} active borrows where user is book owner`
+      );
+    }
+
+    // 6️⃣ حذف المستخدم من قاعدة البيانات (Hard Delete)
+    await userModel.findByIdAndDelete(userId);
+    console.log(`👤 User ${userId} permanently deleted from database`);
+
+    const totalCancelled = cancelledOperations + terminatedBorrows;
+
+    return {
+      success: true,
+      message: 'User automatically deleted due to 3 reviewed reports',
+      details: {
+        userId,
+        userName: user.fullName || `${user.firstName} ${user.secondName}`,
+        deletedBooks,
+        cancelledOperations,
+        terminatedBorrows,
+        totalCancelled,
+        deletionDate: currentDate,
+      },
+    };
+  } catch (error) {
+    console.error('❌ Error deleting user due to reports:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+/**
  * دالة مساعدة لتعبئة بيانات التقارير
  */
 const populateReports = async (reports) => {
@@ -117,6 +352,21 @@ export const createReport = asyncHandler(async (req, res, next) => {
 
   if (targetType === 'user' && targetId === reporterId.toString()) {
     return next(new AppError('You cannot report yourself.', 403));
+  }
+
+  // ✅ التحقق من وجود المستهدف (خاصة للمستخدمين)
+  if (targetType === 'user') {
+    const targetUser = await userModel.findById(targetId);
+    if (!targetUser) {
+      return next(new AppError('User not found.', 404));
+    }
+  }
+
+  if (targetType === 'Book') {
+    const targetBook = await Book.findById(targetId);
+    if (!targetBook || targetBook.isDeleted) {
+      return next(new AppError('Book not found or has been deleted.', 404));
+    }
   }
 
   const duplicateReport = await Report.findOne({
@@ -280,6 +530,7 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
 
   let autoDeletionResult = null;
 
+  // إذا كان التقرير عن كتاب وتم تأكيده
   if (report.targetType === 'Book' && status === 'Reviewed') {
     try {
       const reviewedReportsCount = await Report.countDocuments({
@@ -296,7 +547,28 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
         autoDeletionResult = await deleteBookDueToReports(report.targetId);
       }
     } catch (error) {
-      console.error('Failed to check auto-deletion:', error);
+      console.error('Failed to check auto-deletion for book:', error);
+    }
+  }
+
+  // إذا كان التقرير عن مستخدم وتم تأكيده - ✅ إضافة هذا الجزء الجديد
+  if (report.targetType === 'user' && status === 'Reviewed') {
+    try {
+      const reviewedReportsCount = await Report.countDocuments({
+        targetType: 'user',
+        targetId: report.targetId,
+        status: 'Reviewed',
+        isDeleted: false,
+      });
+
+      console.log(`📊 User ${report.targetId} now has ${reviewedReportsCount} reviewed reports`);
+
+      if (reviewedReportsCount >= 3) {
+        console.log(`🚨 User ${report.targetId} reached 3 reviewed reports! Auto-deleting...`);
+        autoDeletionResult = await deleteUserDueToReports(report.targetId);
+      }
+    } catch (error) {
+      console.error('Failed to check auto-deletion for user:', error);
     }
   }
 
