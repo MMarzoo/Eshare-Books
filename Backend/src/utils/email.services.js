@@ -1,31 +1,39 @@
-import nodemailer from "nodemailer"
+import nodemailer from 'nodemailer';
 
-export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to = "" , text = "" , html = "" , attachments = {} , cc = "" , appName = "SarahaApp"}) => {
-    // Create a test account or replace with real credentials.
-    const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: process.env.GOOGLE_EMAIL,
-            pass: process.env.GOOGLE_PASSWORD,
-        },
+export const sendEmail = ({
+  from = process.env.GOOGLE_EMAIL,
+  subject = '',
+  to = '',
+  text = '',
+  html = '',
+  attachments = {},
+  cc = '',
+  appName = 'SarahaApp',
+}) => {
+  // Create a test account or replace with real credentials.
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GOOGLE_EMAIL,
+      pass: process.env.GOOGLE_PASSWORD,
+    },
+  });
+
+  // Wrap in an async IIFE so we can use await.
+  (async () => {
+    const info = await transporter.sendMail({
+      from: `${appName} <${from}>`,
+      to: to,
+      subject: subject,
+      text: text, // plain‑text body
+      html: html, // HTML body
+      attachments: attachments,
+      cc: cc,
     });
 
-    // Wrap in an async IIFE so we can use await.
-    (async () => {
-        const info = await transporter.sendMail({
-            from: `${appName} <${from}>`,
-            to: to,
-            subject: subject,
-            text: text, // plain‑text body
-            html: html, // HTML body
-            attachments: attachments,
-            cc : cc
-        });
-
-        console.log("Message sent:", info.messageId);
-    })();
-}
-
+    console.log('Message sent:', info.messageId);
+  })();
+};
 
 // export const template = (email) => {
 //     return `
@@ -91,7 +99,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 
 //   <!-- You can change background colour here -->
 //   <body style="text-align: center; margin: 0; padding-top: 10px; padding-bottom: 10px; padding-left: 0; padding-right: 0; -webkit-text-size-adjust: 100%;background-color: #f2f4f6; color: #000000" align="center">
-  
+
 //   <!-- Fallback force center content -->
 //   <div style="text-align: center;">
 
@@ -108,7 +116,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 //       </tbody>
 //     </table>
 //     <!-- Email not displaying correctly -->
-    
+
 //     <!-- Start container for logo -->
 //     <table align="center" style="text-align: center; vertical-align: top; width: 600px; max-width: 600px; background-color: #ffffff;" width="600">
 //       <tbody>
@@ -136,7 +144,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 
 //               <h1 style="font-size: 20px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 600; text-decoration: none; color: #000000;">Single column, dolor sit amet</h1>
 
-//               <p style="font-size: 15px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 400; text-decoration: none; color: #919293;">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Etiam mattis ante sed imperdiet euismod. Vivamus fermentum bibendum turpis, et tempor dui. Sed vitae lectus egestas, finibus purus ac, rutrum mauris.</p>              
+//               <p style="font-size: 15px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 400; text-decoration: none; color: #919293;">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Etiam mattis ante sed imperdiet euismod. Vivamus fermentum bibendum turpis, et tempor dui. Sed vitae lectus egestas, finibus purus ac, rutrum mauris.</p>
 
 //               <p style="font-size: 15px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 400; text-decoration: none; color: #919293;">You can download this template <a target="_blank" style="text-decoration: underline; color: #000000;" href="https://fullsphere.co.uk/misc/free-template/html-email-template.zip" download="HTML Email Template"><u>here</u></a></p>
 
@@ -158,7 +166,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 //         </tbody>
 //       </table>
 //       <!-- End single column section -->
-      
+
 //       <!-- Start image -->
 //       <img style="width: 600px; max-width: 600px; height: 240px; max-height: 240px; text-align: center;" alt="Image" src="https://fullsphere.co.uk/misc/free-template/images/image-2.jpg" align="center" width="600" height="240">
 //       <!-- End image -->
@@ -179,15 +187,15 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 
 //       <!-- Start double column section -->
 //       <table align="center" style="text-align: center; vertical-align: top; width: 600px; max-width: 600px; background-color: #ffffff;" width="600">
-//         <tbody> 
-//             <tr>      
+//         <tbody>
+//             <tr>
 //               <td style="width: 252px; vertical-align: top; padding-left: 30px; padding-right: 15px; padding-top: 0; padding-bottom: 30px; text-align: center;" width="252">
 
 //                 <p style="font-size: 15px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 400; text-decoration: none; color: #919293;">Vivamus felis velit, iaculis eu eros sed, consequat viverra libero. Aliquam ipsum eros, imperdiet eget fermentum eget, cursus a sapien.</p>
-              
+
 //               </td>
 
-//               <td style="width: 252px; vertical-align: top; padding-left: 15px; padding-right: 30px; padding-top: 0; padding-bottom: 30px; text-align: center;" width="252">              
+//               <td style="width: 252px; vertical-align: top; padding-left: 15px; padding-right: 30px; padding-top: 0; padding-bottom: 30px; text-align: center;" width="252">
 //                 <p style="font-size: 15px; line-height: 24px; font-family: 'Helvetica', Arial, sans-serif; font-weight: 400; text-decoration: none; color: #919293;">Pellentesque mollis bibendum sollicitudin. Aenean tempor eros at risus mollis gravida. Aenean in urna eget elit pretium ultrices eu vitae elit.</p>
 
 //             </td>
@@ -224,13 +232,13 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 //         </tbody>
 //       </table>
 //       <!-- End footer -->
-    
+
 //       <!-- Start unsubscribe section -->
 //       <table align="center" style="text-align: center; vertical-align: top; width: 600px; max-width: 600px;" width="600">
 //         <tbody>
 //           <tr>
 //             <td style="width: 596px; vertical-align: top; padding-left: 30px; padding-right: 30px; padding-top: 30px; padding-bottom: 30px;" width="596">
-              
+
 //               <p style="font-size: 12px; line-height: 12px; font-family: 'Helvetica', Arial, sans-serif; font-weight: normal; text-decoration: none; color: #000000;">
 //                 Not wanting to receive these emails?
 //               </p>
@@ -248,7 +256,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 //         </tbody>
 //       </table>
 //       <!-- End unsubscribe section -->
-  
+
 //   </div>
 
 //   </body>
@@ -260,7 +268,7 @@ export const sendEmail = ({from = process.env.GOOGLE_EMAIL , subject  = "" , to 
 
 export const template = (email) => {
   const verifyUrl = `${process.env.BASE_URL}/auth/verify/${email}`;
-  
+
   return `
 <!DOCTYPE html>
 <html>
@@ -366,8 +374,7 @@ export const template = (email) => {
   `;
 };
 
-
-export const resetPasswordTemplate = (resetCode, expiryTime = "15 minutes") => {
+export const resetPasswordTemplate = (resetCode, expiryTime = '15 minutes') => {
   return `
 <!DOCTYPE html>
 <html>
@@ -455,6 +462,158 @@ export const resetPasswordTemplate = (resetCode, expiryTime = "15 minutes") => {
         <div class="footer">
             <p>For security reasons, this code will expire in <strong>${expiryTime}</strong></p>
             <p>If you're having trouble, please contact our support team.</p>
+        </div>
+    </div>
+</body>
+</html>
+  `;
+};
+
+// ✅ إضافة هذا القالب بعد قالب resetPasswordTemplate
+
+export const userDeletedDueToReportsTemplate = (userName) => {
+  const supportEmail = process.env.SUPPORT_EMAIL || 'support@esharebook.com';
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Deletion Notice</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 0;
+            background-color: #f8fafc;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            margin: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #dc2626, #ef4444);
+            padding: 30px;
+            text-align: center;
+            color: white;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .content {
+            padding: 30px;
+        }
+        .alert-box {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .details {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .footer {
+            background-color: #f1f5f9;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #dc2626;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 10px 0;
+        }
+        .button:hover {
+            background-color: #b91c1c;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Esharebook</h1>
+            <p>Account Deletion Notice</p>
+        </div>
+        
+        <div class="content">
+            <h2>Dear ${userName},</h2>
+            
+            <div class="alert-box">
+                <p><strong>Important Notice:</strong> Your Esharebook account has been permanently deleted due to receiving 3 confirmed reports against your account.</p>
+            </div>
+            
+            <p>This action was taken in accordance with our community guidelines and terms of service. When a user receives 3 or more confirmed reports, our system automatically removes the account to maintain a safe and respectful environment for all users.</p>
+            
+            <div class="details">
+                <h3>Deletion Details:</h3>
+                <ul>
+                    <li><strong>Reason:</strong> 3 confirmed reports against your account</li>
+                    <li><strong>Deletion Date:</strong> ${currentDate}</li>
+                    <li><strong>Action:</strong> Permanent account deletion</li>
+                </ul>
+            </div>
+            
+            <h3>What This Means:</h3>
+            <ul>
+                <li>Your account can no longer be accessed</li>
+                <li>All your books have been removed from the platform</li>
+                <li>Any active operations (borrows, sales, exchanges) have been cancelled</li>
+                <li>Your personal data has been permanently deleted from our systems</li>
+            </ul>
+            
+            <h3>Our Community Guidelines:</h3>
+            <p>Esharebook is committed to maintaining a safe and respectful community. We have zero tolerance for:</p>
+            <ul>
+                <li>Inappropriate content or behavior</li>
+                <li>Harassment or offensive language</li>
+                <li>Spam or fraudulent activities</li>
+                <li>Any violation of our terms of service</li>
+            </ul>
+            
+            <h3>If You Believe This Was a Mistake:</h3>
+            <p>If you think your account was deleted in error, you may contact our support team at <a href="mailto:${supportEmail}">${supportEmail}</a> for review. Please note that account restoration is only possible under exceptional circumstances.</p>
+            
+            <p>Thank you for your understanding.</p>
+            
+            <p>Sincerely,<br>
+            <strong>The Esharebook Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>&copy; ${new Date().getFullYear()} Esharebook. All rights reserved.</p>
         </div>
     </div>
 </body>
