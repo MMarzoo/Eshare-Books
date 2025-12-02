@@ -7,6 +7,7 @@ import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import Book from '../../DB/models/bookmodel.js';
 import operationModel from '../../DB/models/operation.model.js';
 import userModel from '../../DB/models/User.model.js';
+import { sendEmailEvent } from '../../Events/sendEmail.event.js';
 
 /**
  * دالة مساعدة لحذف الكتاب عند 3 إبلاغات
@@ -82,15 +83,18 @@ const deleteBookDueToReports = async (bookId) => {
 
 /**
  * دالة مساعدة لحذف المستخدم عند 3 إبلاغات مؤكدة
- * تشبه تماماً منطق حذف الكتاب مع بعض التعديلات
  */
 const deleteUserDueToReports = async (userId) => {
   try {
+    console.log(`🔍 Searching for user ${userId}...`);
+
     const user = await userModel.findOne({ _id: userId });
 
     if (!user) {
       return { success: false, message: 'User not found' };
     }
+
+    console.log(`👤 Found user: ${user.firstName} ${user.secondName} (${user.email})`);
 
     const currentDate = new Date();
     let deletedBooks = 0;
@@ -291,7 +295,19 @@ const deleteUserDueToReports = async (userId) => {
 
     // 6️⃣ حذف المستخدم من قاعدة البيانات (Hard Delete)
     await userModel.findByIdAndDelete(userId);
-    console.log(`👤 User ${userId} permanently deleted from database`);
+    console.log(`✅ User ${userId} permanently deleted from database`);
+
+    // 7️⃣ إرسال بريد إلكتروني للمستخدم بعد الحذف
+    try {
+      sendEmailEvent.emit('userDeletedDueToReports', {
+        userEmail: user.email,
+        userName: `${user.firstName} ${user.secondName}`,
+      });
+      console.log(`📧 Deletion email sent to ${user.email}`);
+    } catch (emailError) {
+      console.error('Failed to send deletion email:', emailError);
+      // لا نوقف العملية إذا فشل إرسال البريد الإلكتروني
+    }
 
     const totalCancelled = cancelledOperations + terminatedBorrows;
 
@@ -300,12 +316,14 @@ const deleteUserDueToReports = async (userId) => {
       message: 'User automatically deleted due to 3 reviewed reports',
       details: {
         userId,
-        userName: user.fullName || `${user.firstName} ${user.secondName}`,
+        userName: `${user.firstName} ${user.secondName}`,
+        userEmail: user.email,
         deletedBooks,
         cancelledOperations,
         terminatedBorrows,
         totalCancelled,
         deletionDate: currentDate,
+        emailSent: true,
       },
     };
   } catch (error) {
