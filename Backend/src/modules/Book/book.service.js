@@ -8,11 +8,11 @@ import { moderateImage, moderateText } from '../../utils/ai/moderation.js';
 import mongoose from 'mongoose';
 
 // 👇 إضافة موديل العمليات + الـ enums
-import Operation from '../../DB/models/operation.model.js';
+import operationModel from '../../DB/models/operation.model.js';
 import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import categoryModel from '../../DB/models/category.model.js';
 import userModel from '../../DB/models/User.model.js';
-import bookmodel from '../../DB/models/bookmodel.js';
+import Report from '../../DB/models/report.model.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -259,20 +259,22 @@ export const getAllBooks = asyncHandler(async (req, res, next) => {
   const now = new Date();
 
   // 1️⃣ الكتب اللي اتباعت أو اتمدت (BUY + DONATE مكتملة)
-  const soldBookIds = await Operation.distinct('book_dest_id', {
+  const soldBookIds = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
   });
 
   // 2️⃣ عمليات الـ BORROW النشطة حاليًا
-  const activeBorrowOps = await Operation.find({
-    operationType: operationTypeEnum.BORROW,
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-    startDate: { $lte: now },
-    endDate: { $gte: now },
-  }).select('book_dest_id');
+  const activeBorrowOps = await operationModel
+    .find({
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    })
+    .select('book_dest_id');
 
   const activeBorrowIds = new Set(activeBorrowOps.map((op) => op.book_dest_id.toString()));
 
@@ -345,25 +347,27 @@ export const getAllBooksIncludingAll = asyncHandler(async (req, res, next) => {
     .lean();
 
   // Get sold/donated/active borrow IDs (distinct is more efficient)
-  const soldIdsArr = await Operation.distinct('book_dest_id', {
+  const soldIdsArr = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.BUY] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
   });
 
-  const donatedIdsArr = await Operation.distinct('book_dest_id', {
+  const donatedIdsArr = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
   });
 
-  const activeBorrowOps = await Operation.find({
-    operationType: operationTypeEnum.BORROW,
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-    startDate: { $lte: now },
-    endDate: { $gte: now },
-  }).select('book_dest_id startDate endDate');
+  const activeBorrowOps = await operationModel
+    .find({
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    })
+    .select('book_dest_id startDate endDate');
 
   const soldIds = new Set(soldIdsArr.map((id) => id?.toString()));
   const donatedIds = new Set(donatedIdsArr.map((id) => id?.toString()));
@@ -443,26 +447,28 @@ export const getBooksByCategory = asyncHandler(async (req, res) => {
   const { categoryId } = req.params;
   const now = new Date();
 
-  const soldBookIds = await Operation.distinct('book_dest_id', {
+  const soldBookIds = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
   });
 
-  const activeBorrowOps = await Operation.find({
-    operationType: operationTypeEnum.BORROW,
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-    startDate: { $lte: now },
-    endDate: { $gte: now },
-  }).select('book_dest_id');
+  const activeBorrowOps = await operationModel
+    .find({
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    })
+    .select('book_dest_id');
 
   const activeBorrowIds = new Set(activeBorrowOps.map((op) => op.book_dest_id.toString()));
 
   const books = await Book.find({
     categoryId,
     isDeleted: false,
-    IsModerated: true, // ⬅️ نضيف الشرط هنا
+    IsModerated: true,
     _id: { $nin: soldBookIds },
   })
     .populate('UserID', 'firstName secondName email avatar name')
@@ -491,7 +497,7 @@ export const getBookById = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const now = new Date();
 
-  const soldOrDonatedOp = await Operation.findOne({
+  const soldOrDonatedOp = await operationModel.findOne({
     book_dest_id: id,
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
@@ -502,7 +508,7 @@ export const getBookById = asyncHandler(async (req, res) => {
     throw new AppError('❌ Book not found', 404);
   }
 
-  const activeBorrowOp = await Operation.findOne({
+  const activeBorrowOp = await operationModel.findOne({
     book_dest_id: id,
     operationType: operationTypeEnum.BORROW,
     status: operationStatusEnum.COMPLETED,
@@ -515,7 +521,7 @@ export const getBookById = asyncHandler(async (req, res) => {
   const bookDoc = await Book.findOne({
     _id: id,
     isDeleted: false,
-    IsModerated: true, // ⬅️ نضيف الشرط هنا
+    IsModerated: true,
   })
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name');
@@ -532,18 +538,20 @@ export const getBookById = asyncHandler(async (req, res) => {
     : null;
 
   // ✅ NEW: فترات الحجز
-  const reservedBorrows = await Operation.find({
-    book_dest_id: id,
-    operationType: operationTypeEnum.BORROW,
-    isDeleted: false,
-    status: {
-      $in: [
-        operationStatusEnum.PENDING,
-        operationStatusEnum.ACCEPTED,
-        operationStatusEnum.COMPLETED,
-      ],
-    },
-  }).select('startDate endDate status');
+  const reservedBorrows = await operationModel
+    .find({
+      book_dest_id: id,
+      operationType: operationTypeEnum.BORROW,
+      isDeleted: false,
+      status: {
+        $in: [
+          operationStatusEnum.PENDING,
+          operationStatusEnum.ACCEPTED,
+          operationStatusEnum.COMPLETED,
+        ],
+      },
+    })
+    .select('startDate endDate status');
 
   book.reservedBorrows = reservedBorrows;
 
@@ -716,14 +724,13 @@ export const updateBook = asyncHandler(async (req, res, next) => {
     // Handle Price and PricePerDay based on TransactionType
     if (updateData.TransactionType === 'toSale') {
       updateData.Price = updateData.Price ? parseFloat(updateData.Price) : book.Price;
-      updateData.PricePerDay = undefined; // Clear borrow pricing
+      updateData.PricePerDay = undefined;
     } else if (updateData.TransactionType === 'toBorrow') {
       updateData.PricePerDay = updateData.PricePerDay
         ? parseFloat(updateData.PricePerDay)
         : book.PricePerDay;
-      updateData.Price = undefined; // Clear sale pricing
+      updateData.Price = undefined;
     } else {
-      // For exchange/donate, clear pricing fields
       updateData.Price = undefined;
       updateData.PricePerDay = undefined;
     }
@@ -787,6 +794,7 @@ export const updateBook = asyncHandler(async (req, res, next) => {
     next(error);
   }
 });
+
 /* ──────────────────────────────
    📘 Soft Delete Book
 ────────────────────────────── */
@@ -812,7 +820,7 @@ export const deleteBook = asyncHandler(async (req, res, next) => {
    - نفس منطق الكتب المباعة + الاستعارة
 ────────────────────────────── */
 export const getBooksByTransactionType = asyncHandler(async (req, res) => {
-  const { type } = req.params; // toSale / toBorrow / ...
+  const { type } = req.params;
 
   const validTypes = ['toSale', 'toBorrow', 'toExchange', 'toDonate'];
   if (!validTypes.includes(type)) {
@@ -825,19 +833,21 @@ export const getBooksByTransactionType = asyncHandler(async (req, res) => {
 
   const now = new Date();
 
-  const soldBookIds = await Operation.distinct('book_dest_id', {
+  const soldBookIds = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
   });
 
-  const activeBorrowOps = await Operation.find({
-    operationType: operationTypeEnum.BORROW,
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-    startDate: { $lte: now },
-    endDate: { $gte: now },
-  }).select('book_dest_id');
+  const activeBorrowOps = await operationModel
+    .find({
+      operationType: operationTypeEnum.BORROW,
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    })
+    .select('book_dest_id');
 
   const activeBorrowIds = new Set(activeBorrowOps.map((op) => op.book_dest_id.toString()));
 
@@ -876,7 +886,7 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
   }
 
   // 1️⃣ نجيب الـ IDs للكتب اللي اتباعت أو اتمدت (BUY + DONATE مكتملة)
-  const soldOrDonatedBookIds = await Operation.distinct('book_dest_id', {
+  const soldOrDonatedBookIds = await operationModel.distinct('book_dest_id', {
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
     isDeleted: false,
@@ -886,8 +896,8 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
   const books = await Book.find({
     UserID: userId,
     isDeleted: false,
-    IsModerated: true, // ⬅️ بس الكتب المعمولها moderation
-    _id: { $nin: soldOrDonatedBookIds }, // ⬅️ ما نرجعش الكتب المباعة/المتمدية
+    IsModerated: true,
+    _id: { $nin: soldOrDonatedBookIds },
   })
     .populate('UserID', 'firstName secondName email avatar name')
     .populate('categoryId', 'name')
@@ -922,7 +932,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   // ─────────────────────────────────
   // 1️⃣ Check for Active Operations (Pending/Accepted) and Cancel Them
   // ─────────────────────────────────
-  const activeOperations = await Operation.find({
+  const activeOperations = await operationModel.find({
     book_dest_id: id,
     status: {
       $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED],
@@ -931,8 +941,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   });
 
   if (activeOperations.length > 0) {
-    // Cancel all active operations for this book
-    await Operation.updateMany(
+    await operationModel.updateMany(
       {
         book_dest_id: id,
         status: {
@@ -955,7 +964,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   // ─────────────────────────────────
   // 2️⃣ Check for Completed Borrow Operations That Are Still Active
   // ─────────────────────────────────
-  const activeBorrows = await Operation.find({
+  const activeBorrows = await operationModel.find({
     book_dest_id: id,
     operationType: operationTypeEnum.BORROW,
     status: operationStatusEnum.COMPLETED,
@@ -965,8 +974,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   });
 
   if (activeBorrows.length > 0) {
-    // For completed borrows that are currently active, mark as returned
-    await Operation.updateMany(
+    await operationModel.updateMany(
       {
         book_dest_id: id,
         operationType: operationTypeEnum.BORROW,
@@ -977,7 +985,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
       },
       {
         $set: {
-          endDate: currentDate, // Set end date to now (early return)
+          endDate: currentDate,
           isDeleted: true,
         },
       }
@@ -1020,12 +1028,10 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { IsModerated } = req.body;
 
-  // Validate required field
   if (typeof IsModerated === 'undefined') {
     throw new AppError('❌ IsModerated field is required', 400);
   }
 
-  // Validate boolean value
   if (typeof IsModerated !== 'boolean') {
     throw new AppError('❌ IsModerated must be a boolean value (true or false)', 400);
   }
@@ -1035,7 +1041,6 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Book not found', 404);
   }
 
-  // Update moderation status
   book.IsModerated = IsModerated;
   await book.save();
 
@@ -1073,9 +1078,27 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // Check if book owner (user) still exists
-  const user = await userModel.findById(book.UserID);
+  // 🔴 **التحقق من عدد الإبلاغات الحالي (إذا كان 3 أو أكثر، نمنع الاستعادة)**
+  const currentReviewedReports = await Report.countDocuments({
+    targetType: 'Book',
+    targetId: id,
+    status: 'Reviewed',
+    isDeleted: false,
+  });
 
+  if (currentReviewedReports >= 3) {
+    return res.status(400).json({
+      success: false,
+      message: '❌ Cannot restore this book. It currently has 3 or more reviewed reports.',
+      details: {
+        currentReportCount: currentReviewedReports,
+        requiredForAutoDeletion: 3,
+        canBeRestored: false,
+      },
+    });
+  }
+
+  const user = await userModel.findById(book.UserID);
   if (!user) {
     return res.status(400).json({
       success: false,
@@ -1086,14 +1109,12 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // Check if book's category still exists and is not deleted
   const category = await categoryModel.findOne({
     _id: book.categoryId,
     isDeleted: false,
   });
 
   if (!category) {
-    // Get category name for better error message
     const deletedCategory = await categoryModel.findOne({
       _id: book.categoryId,
     });
@@ -1112,9 +1133,8 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // Check if there's an active borrow operation for this book
   const currentDate = new Date();
-  const activeBorrow = await Operation.findOne({
+  const activeBorrow = await operationModel.findOne({
     book_dest_id: id,
     operationType: operationTypeEnum.BORROW,
     status: operationStatusEnum.COMPLETED,
@@ -1136,8 +1156,7 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // Prevent restoration of sold or donated books
-  const soldOrDonated = await Operation.findOne({
+  const soldOrDonated = await operationModel.findOne({
     book_dest_id: id,
     operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
     status: operationStatusEnum.COMPLETED,
@@ -1151,13 +1170,12 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
-  // Restore the book
   book.isDeleted = false;
   await book.save();
 
   res.json({
     success: true,
-    message: 'Book restored successfully by admin',
+    message: '✅ Book restored successfully by admin',
     restoredBook: {
       id: book._id,
       title: book.Title,
@@ -1183,21 +1201,14 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { categoryId } = req.body;
 
-  // ─────────────────────────────────
-  // 1️⃣ Validate Required Fields
-  // ─────────────────────────────────
   if (!categoryId) {
     throw new AppError('❌ categoryId is required', 400);
   }
 
-  // Validate categoryId format
   if (!mongoose.Types.ObjectId.isValid(categoryId)) {
     throw new AppError('❌ Invalid category ID format', 400);
   }
 
-  // ─────────────────────────────────
-  // 2️⃣ Check if Category Exists and Not Deleted
-  // ─────────────────────────────────
   const category = await categoryModel.findOne({
     _id: categoryId,
     isDeleted: false,
@@ -1207,23 +1218,16 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Category not found or has been deleted', 404);
   }
 
-  // ─────────────────────────────────
-  // 3️⃣ Check if Book Exists (REMOVED isDeleted check)
-  // ─────────────────────────────────
   const book = await Book.findOne({
     _id: id,
-    // Removed: isDeleted: false, - Now allows updating category for deleted books
   });
 
   if (!book) {
     throw new AppError('❌ Book not found', 404);
   }
 
-  // ─────────────────────────────────
-  // 4️⃣ Check if Book is Sold or Donated (ONLY for non-deleted books)
-  // ─────────────────────────────────
   if (!book.isDeleted) {
-    const soldOrDonated = await Operation.findOne({
+    const soldOrDonated = await operationModel.findOne({
       book_dest_id: id,
       operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
       status: operationStatusEnum.COMPLETED,
@@ -1235,19 +1239,12 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
     }
   }
 
-  // ─────────────────────────────────
-  // 5️⃣ Update Book Category
-  // ─────────────────────────────────
   book.categoryId = categoryId;
   await book.save();
 
-  // ─────────────────────────────────
-  // 6️⃣ Get Updated Book with Same Structure as getBookById
-  // ─────────────────────────────────
   const now = new Date();
 
-  // Check if there's active borrow operation (same logic as getBookById)
-  const activeBorrowOp = await Operation.findOne({
+  const activeBorrowOp = await operationModel.findOne({
     book_dest_id: id,
     operationType: operationTypeEnum.BORROW,
     status: operationStatusEnum.COMPLETED,
@@ -1256,10 +1253,8 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
     endDate: { $gte: now },
   });
 
-  // Get the updated book with population (same fields as getBookById)
   const updatedBook = await Book.findOne({
     _id: id,
-    // Removed: isDeleted: false, - Now returns deleted books as well
   })
     .populate('UserID', 'firstName secondName email avatar name fullName')
     .populate('categoryId', 'name');
@@ -1268,7 +1263,6 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Book not found after update', 404);
   }
 
-  // Convert to object and add the same fields as getBookById
   const bookResponse = updatedBook.toObject();
   bookResponse.isBorrowedNow = !!activeBorrowOp;
   bookResponse.currentBorrow = activeBorrowOp
@@ -1278,9 +1272,6 @@ export const adminUpdateBookCategory = asyncHandler(async (req, res, next) => {
       }
     : null;
 
-  // ─────────────────────────────────
-  // 7️⃣ Return Success Response (Same Structure as getBookById)
-  // ─────────────────────────────────
   res.json({
     message: '✅ Book category updated successfully',
     book: bookResponse,

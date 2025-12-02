@@ -3,6 +3,108 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { AppError } from '../../utils/AppError.js';
 import { successResponce } from '../../utils/Response.js';
 import { findManyNonDeleted, restoreSoftDelete, softDelete } from '../../DB/db.services.js';
+import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
+import Book from '../../DB/models/bookmodel.js';
+import operationModel from '../../DB/models/operation.model.js';
+
+/**
+ * دالة مساعدة لحذف الكتاب عند 3 إبلاغات
+ */
+const deleteBookDueToReports = async (bookId) => {
+  try {
+    const book = await Book.findOne({ _id: bookId, isDeleted: false });
+
+    if (!book) {
+      return { success: false, message: 'Book already deleted or not found' };
+    }
+
+    const soldOrDonated = await operationModel.findOne({
+      book_dest_id: bookId,
+      operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] },
+      status: operationStatusEnum.COMPLETED,
+      isDeleted: false,
+    });
+
+    if (soldOrDonated) {
+      return { success: false, message: 'Book has been sold or donated' };
+    }
+
+    const currentDate = new Date();
+
+    await operationModel.updateMany(
+      {
+        book_dest_id: bookId,
+        status: { $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED] },
+        isDeleted: false,
+      },
+      {
+        $set: {
+          status: operationStatusEnum.REJECTED,
+          isDeleted: true,
+        },
+      }
+    );
+
+    await operationModel.updateMany(
+      {
+        book_dest_id: bookId,
+        operationType: operationTypeEnum.BORROW,
+        status: operationStatusEnum.COMPLETED,
+        isDeleted: false,
+        startDate: { $lte: currentDate },
+        endDate: { $gte: currentDate },
+      },
+      {
+        $set: {
+          endDate: currentDate,
+          isDeleted: true,
+        },
+      }
+    );
+
+    book.isDeleted = true;
+    await book.save();
+
+    console.log(`🚨 Book ${bookId} deleted due to 3 reviewed reports`);
+
+    return {
+      success: true,
+      message: 'Book automatically deleted due to 3 reviewed reports',
+      bookTitle: book.Title,
+      deletionDate: currentDate,
+    };
+  } catch (error) {
+    console.error('Error deleting book due to reports:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+/**
+ * دالة مساعدة لتعبئة بيانات التقارير
+ */
+const populateReports = async (reports) => {
+  for (let report of reports) {
+    await report.populate({
+      path: 'reporterId',
+      select: 'firstName secondName fullName',
+      model: 'user',
+    });
+
+    if (report.targetType === 'user') {
+      await report.populate({
+        path: 'targetId',
+        select: 'firstName secondName fullName',
+        model: 'user',
+      });
+    } else if (report.targetType === 'Book') {
+      await report.populate({
+        path: 'targetId',
+        select: 'Title',
+        model: 'Book',
+      });
+    }
+  }
+};
 
 /**
  * @desc Create a new report (Book or User)
@@ -93,29 +195,7 @@ export const getAllReports = asyncHandler(async (req, res, next) => {
 
   if (!reports.length) return next(new AppError('No reports found.', 404));
 
-  for (let report of reports) {
-    // Populate reporter data
-    await report.populate({
-      path: 'reporterId',
-      select: 'firstName secondName fullName',
-      model: 'user',
-    });
-
-    // Populate target data
-    if (report.targetType === 'user') {
-      await report.populate({
-        path: 'targetId',
-        select: 'firstName secondName fullName',
-        model: 'user',
-      });
-    } else if (report.targetType === 'Book') {
-      await report.populate({
-        path: 'targetId',
-        select: 'Title',
-        model: 'Book',
-      });
-    }
-  }
+  await populateReports(reports);
 
   return successResponce({
     res,
@@ -198,10 +278,40 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
 
   if (!report) return next(new AppError('Report not found.', 404));
 
+  let autoDeletionResult = null;
+
+  if (report.targetType === 'Book' && status === 'Reviewed') {
+    try {
+      const reviewedReportsCount = await Report.countDocuments({
+        targetType: 'Book',
+        targetId: report.targetId,
+        status: 'Reviewed',
+        isDeleted: false,
+      });
+
+      console.log(`📊 Book ${report.targetId} now has ${reviewedReportsCount} reviewed reports`);
+
+      if (reviewedReportsCount >= 3) {
+        console.log(`🚨 Book ${report.targetId} reached 3 reviewed reports! Auto-deleting...`);
+        autoDeletionResult = await deleteBookDueToReports(report.targetId);
+      }
+    } catch (error) {
+      console.error('Failed to check auto-deletion:', error);
+    }
+  }
+
+  const responseData = report.toObject();
+
+  if (autoDeletionResult) {
+    responseData.autoDeletion = autoDeletionResult;
+  }
+
   return successResponce({
     res,
-    message: 'Report status updated successfully.',
-    data: report,
+    message: autoDeletionResult
+      ? `Report status updated to ${status}. ${autoDeletionResult.message}`
+      : `Report status updated to ${status}`,
+    data: responseData,
   });
 });
 
