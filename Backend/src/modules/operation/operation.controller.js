@@ -1,19 +1,20 @@
-import operationModel from "../../DB/models/operation.model.js";
-import { operationStatusEnum } from "../../enum.js";
-import { asyncHandler } from "../../utils/asyncHandler.js";
-import { findByIdAndUpdate, softDelete } from "../../DB/db.services.js";
-import userModel from "../../DB/models/User.model.js";
-import bookmodel from "../../DB/models/bookmodel.js";
+import operationModel from '../../DB/models/operation.model.js';
+import { operationStatusEnum } from '../../enum.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
+import { findByIdAndUpdate, softDelete } from '../../DB/db.services.js';
+import userModel from '../../DB/models/User.model.js';
+import bookmodel from '../../DB/models/bookmodel.js';
 import {
   validateActiveStatus,
   validateBookTransactionType,
   validateDuplicateOperation,
   validateOperationOwnership,
-  validateBorrowAvailability, // ✅ NEW
-} from "./operationValidation.service.js";
-import { successResponce } from "../../utils/Response.js";
-import { AppError } from "../../utils/AppError.js";
-import { NotificationInstance } from "../../Gateways/notification.instance.js";
+  validateBorrowAvailability,
+} from './operationValidation.service.js';
+import { successResponce } from '../../utils/Response.js';
+import { AppError } from '../../utils/AppError.js';
+import { NotificationInstance } from '../../Gateways/notification.instance.js';
+import Report from '../../DB/models/report.model.js';
 
 // Helper Functions
 const findBookById = async (bookId) => await bookmodel.findById(bookId);
@@ -24,54 +25,124 @@ const findUserById = async (userId) => await userModel.findById(userId);
 export const getAllOperation = asyncHandler(async (req, res) => {
   const operations = await operationModel
     .find({ isDeleted: false })
-    .populate("user_src", "firstName secondName email")
-    .populate("user_dest", "firstName secondName email")
-    .populate("book_src_id", "title author")
-    .populate("book_dest_id", "title author");
+    .populate('user_src', 'firstName secondName email')
+    .populate('user_dest', 'firstName secondName email')
+    .populate('book_src_id', 'title author')
+    .populate('book_dest_id', 'title author');
 
   return successResponce({
     res,
     status: 200,
-    message: "All operations retrieved successfully",
+    message: 'All operations retrieved successfully',
     data: operations,
   });
 });
 
-// ----------------------------------------------------------------------
+// Helper function to check user's previous reports
+const checkUserReports = async (reporterId, targetUserId, bookId) => {
+  const results = {
+    hasBookReport: false,
+    hasUserReport: false,
+    warningMessage: null,
+  };
+
+  // 1️⃣ Check for reports on the BOOK itself
+  const bookReport = await Report.findOne({
+    reporterId,
+    targetType: 'Book',
+    targetId: bookId,
+    status: { $ne: 'Cancelled' },
+    isDeleted: false,
+  });
+
+  if (bookReport) {
+    results.hasBookReport = true;
+    return results;
+  }
+
+  // 2️⃣ Check for reports on the BOOK OWNER (user)
+  const userReport = await Report.findOne({
+    reporterId,
+    targetType: 'user',
+    targetId: targetUserId,
+    status: { $ne: 'Cancelled' },
+    isDeleted: false,
+  });
+
+  if (userReport) {
+    results.hasUserReport = true;
+    results.warningMessage = `⚠️ Warning: You have previously reported the owner of this book (${userReport.reason}). Please reconsider your decision.`;
+  }
+
+  return results;
+};
+
+// ✅ NEW: Check for report warnings before creating operation
+// @desc    Check if user has reported book owner
+// @route   POST /api/operations/check-report
+export const checkReportBeforeOperation = asyncHandler(async (req, res) => {
+  const { user_dest, book_dest_id } = req.body;
+  const user_src = req.user._id;
+
+  if (!user_dest || !book_dest_id) {
+    throw new AppError('user_dest and book_dest_id are required.', 400);
+  }
+
+  // Check for previous reports using existing helper function
+  const reportCheck = await checkUserReports(user_src, user_dest, book_dest_id);
+
+  // 1️⃣ If user reported the BOOK itself → BLOCK completely
+  if (reportCheck.hasBookReport) {
+    throw new AppError('Cannot create operation on a book you have previously reported.', 400);
+  }
+
+  // 2️⃣ If user only reported the BOOK OWNER → Return warning
+  return successResponce({
+    res,
+    status: 200,
+    message: 'Check completed',
+    data: {
+      hasWarning: reportCheck.hasUserReport,
+      warningMessage: reportCheck.warningMessage,
+    },
+  });
+});
+
 // @desc    Create new operation (buy / exchange / borrow / donate)
 // @route   POST /api/operations
 export const createOperation = asyncHandler(async (req, res) => {
-  const {
-    user_dest,
-    book_src_id,
-    book_dest_id,
-    startDate,
-    endDate,
-    numberOfDays,
-    operationType,
-  } = req.validatedBody;
+  const { user_dest, book_src_id, book_dest_id, startDate, endDate, numberOfDays, operationType } =
+    req.validatedBody;
 
   const user_src = req.user._id;
   const srcUser = await findUserById(user_src);
 
   if (user_src.toString() === user_dest.toString()) {
-    throw new AppError("You cannot perform an operation with yourself.", 400);
+    throw new AppError('You cannot perform an operation with yourself.', 400);
   }
 
   const destUser = await findUserById(user_dest);
   if (!destUser) {
-    throw new AppError("Destination user does not exist.", 404);
+    throw new AppError('Destination user does not exist.', 404);
   }
 
   const mainBook = await findBookById(book_dest_id);
   if (!mainBook) {
-    throw new AppError("Requested book does not exist.", 404);
+    throw new AppError('Requested book does not exist.', 404);
   }
 
+  // ✅ Check for previous reports (blocking only if book is reported)
+  const reportCheck = await checkUserReports(user_src, user_dest, book_dest_id);
+
+  // If user reported the BOOK itself → BLOCK completely
+  if (reportCheck.hasBookReport) {
+    throw new AppError('Cannot create operation on a book you have previously reported.', 400);
+  }
+
+  // Note: Warning for user reports is handled by /check-report endpoint
+
   const exchangeBook =
-    operationType === "exchange" && book_src_id
-      ? await findBookById(book_src_id)
-      : null;
+    operationType === 'exchange' && book_src_id ? await findBookById(book_src_id) : null;
 
   await validateBookTransactionType({
     operationType,
@@ -108,12 +179,12 @@ export const createOperation = asyncHandler(async (req, res) => {
     operationType,
   };
 
-  if (book_src_id && operationType === "exchange") {
+  if (book_src_id && operationType === 'exchange') {
     newOperationData.book_src_id = book_src_id;
   }
 
   // ---------------- ✅ BORROW VALIDATION + TOTAL PRICE ----------------
-  if (operationType === "borrow") {
+  if (operationType === 'borrow') {
     let days = 0;
     const pricePerDay = Number(mainBook.PricePerDay) || 0;
 
@@ -128,14 +199,13 @@ export const createOperation = asyncHandler(async (req, res) => {
       end.setHours(0, 0, 0, 0);
 
       if (start < today) {
-        throw new AppError("Start date cannot be in the past.", 400);
+        throw new AppError('Start date cannot be in the past.', 400);
       }
 
       if (end <= start) {
-        throw new AppError("End date must be after start date.", 400);
+        throw new AppError('End date must be after start date.', 400);
       }
 
-      // ✅ NEW: منع تداخل فترات الحجز
       await validateBorrowAvailability({
         bookId: book_dest_id,
         startDate,
@@ -149,20 +219,16 @@ export const createOperation = asyncHandler(async (req, res) => {
       newOperationData.endDate = endDate;
       newOperationData.numberOfDays = days;
     } else if (numberOfDays) {
-      // ⚠️ لازم تاريخين عشان نعرف نمنع التداخل
-      throw new AppError(
-        "Start & end dates are required to check availability.",
-        400
-      );
+      throw new AppError('Start & end dates are required to check availability.', 400);
     } else {
-      throw new AppError("Borrow duration (dates) is required.", 400);
+      throw new AppError('Borrow duration (dates) is required.', 400);
     }
 
     newOperationData.totalPrice = pricePerDay * days;
   }
 
   // ---------------- BUY TOTAL PRICE ----------------
-  if (operationType === "buy") {
+  if (operationType === 'buy') {
     const bookPrice = Number(mainBook.Price) || 0;
     newOperationData.totalPrice = bookPrice;
   }
@@ -172,7 +238,7 @@ export const createOperation = asyncHandler(async (req, res) => {
   await NotificationInstance.send({
     fromUserId: user_src,
     toUserId: user_dest,
-    invitationType: "operation_request",
+    invitationType: 'operation_request',
     message: `You have a new ${operationType} request from ${srcUser.firstName} ${srcUser.secondName} on the book "${mainBook.Title}"`,
     metadata: {
       operationId: newOperation._id.toString(),
@@ -181,10 +247,11 @@ export const createOperation = asyncHandler(async (req, res) => {
     },
   });
 
+  // Simple response without warning (checked earlier)
   return successResponce({
     res,
     status: 201,
-    message: "Operation created successfully",
+    message: 'Operation created successfully',
     data: newOperation,
   });
 });
@@ -203,16 +270,16 @@ export const updateOperation = asyncHandler(async (req, res) => {
   });
 
   if (!updated) {
-    throw new AppError("Operation not found.", 404);
+    throw new AppError('Operation not found.', 404);
   }
 
-  if (value.status === "completed") {
+  if (value.status === 'completed') {
     await NotificationInstance.send({
       fromUserId: req.user._id,
       toUserId: updated.user_src.toString(),
-      invitationType: "payment_required",
+      invitationType: 'payment_required',
       message: `Your ${updated.operationType} request has been accepted. Complete payment now.`,
-      type: "payment",
+      type: 'payment',
       metadata: {
         operationID: updated._id.toString(),
         amount: updated.totalPrice,
@@ -223,7 +290,7 @@ export const updateOperation = asyncHandler(async (req, res) => {
   return successResponce({
     res,
     status: 200,
-    message: "Operation updated successfully",
+    message: 'Operation updated successfully',
     data: updated,
   });
 });
@@ -240,13 +307,13 @@ export const deleteOperation = asyncHandler(async (req, res) => {
   });
 
   if (!deleted) {
-    throw new AppError("Operation not found.", 404);
+    throw new AppError('Operation not found.', 404);
   }
 
   return successResponce({
     res,
     status: 200,
-    message: "Operation deleted successfully",
+    message: 'Operation deleted successfully',
     data: deleted,
   });
 });
@@ -261,13 +328,13 @@ export const getUserOperations = asyncHandler(async (req, res) => {
       $or: [{ user_src: userId }, { user_dest: userId }],
       isDeleted: false,
     })
-    .populate("book_dest_id", "_id Title")
-    .select("book_dest_id status operationType");
+    .populate('book_dest_id', '_id Title')
+    .select('book_dest_id status operationType');
 
   return successResponce({
     res,
     status: 200,
-    message: "User operations retrieved successfully",
+    message: 'User operations retrieved successfully',
     data: operations,
   });
 });
