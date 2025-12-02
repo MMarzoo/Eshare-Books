@@ -9,7 +9,7 @@ import {
   validateBookTransactionType,
   validateDuplicateOperation,
   validateOperationOwnership,
-  validateBorrowAvailability, // ✅ NEW
+  validateBorrowAvailability,
 } from './operationValidation.service.js';
 import { successResponce } from '../../utils/Response.js';
 import { AppError } from '../../utils/AppError.js';
@@ -57,7 +57,7 @@ const checkUserReports = async (reporterId, targetUserId, bookId) => {
 
   if (bookReport) {
     results.hasBookReport = true;
-    return results; // If book report exists, stop here
+    return results;
   }
 
   // 2️⃣ Check for reports on the BOOK OWNER (user)
@@ -77,7 +77,37 @@ const checkUserReports = async (reporterId, targetUserId, bookId) => {
   return results;
 };
 
-// ----------------------------------------------------------------------
+// ✅ NEW: Check for report warnings before creating operation
+// @desc    Check if user has reported book owner
+// @route   POST /api/operations/check-report
+export const checkReportBeforeOperation = asyncHandler(async (req, res) => {
+  const { user_dest, book_dest_id } = req.body;
+  const user_src = req.user._id;
+
+  if (!user_dest || !book_dest_id) {
+    throw new AppError('user_dest and book_dest_id are required.', 400);
+  }
+
+  // Check for previous reports using existing helper function
+  const reportCheck = await checkUserReports(user_src, user_dest, book_dest_id);
+
+  // 1️⃣ If user reported the BOOK itself → BLOCK completely
+  if (reportCheck.hasBookReport) {
+    throw new AppError('Cannot create operation on a book you have previously reported.', 400);
+  }
+
+  // 2️⃣ If user only reported the BOOK OWNER → Return warning
+  return successResponce({
+    res,
+    status: 200,
+    message: 'Check completed',
+    data: {
+      hasWarning: reportCheck.hasUserReport,
+      warningMessage: reportCheck.warningMessage,
+    },
+  });
+});
+
 // @desc    Create new operation (buy / exchange / borrow / donate)
 // @route   POST /api/operations
 export const createOperation = asyncHandler(async (req, res) => {
@@ -101,22 +131,16 @@ export const createOperation = asyncHandler(async (req, res) => {
     throw new AppError('Requested book does not exist.', 404);
   }
 
-  // ✅ Check for previous reports
+  // ✅ Check for previous reports (blocking only if book is reported)
   const reportCheck = await checkUserReports(user_src, user_dest, book_dest_id);
 
-  // 1️⃣ If user reported the BOOK itself → BLOCK completely
+  // If user reported the BOOK itself → BLOCK completely
   if (reportCheck.hasBookReport) {
     throw new AppError('Cannot create operation on a book you have previously reported.', 400);
   }
 
-  // ⚠️ 2️⃣ If user only reported the BOOK OWNER → Show warning but continue
-  let warningMessage = null;
-  if (reportCheck.hasUserReport) {
-    warningMessage = reportCheck.warningMessage;
-    console.log(`⚠️ Warning for user ${user_src}: ${warningMessage}`);
-  }
+  // Note: Warning for user reports is handled by /check-report endpoint
 
-  // ... Continue with existing validations ...
   const exchangeBook =
     operationType === 'exchange' && book_src_id ? await findBookById(book_src_id) : null;
 
@@ -182,7 +206,6 @@ export const createOperation = asyncHandler(async (req, res) => {
         throw new AppError('End date must be after start date.', 400);
       }
 
-      // ✅ NEW: Prevent overlapping borrow periods
       await validateBorrowAvailability({
         bookId: book_dest_id,
         startDate,
@@ -224,19 +247,12 @@ export const createOperation = asyncHandler(async (req, res) => {
     },
   });
 
-  // Prepare response with warning if exists
-  const responseData = {
-    operation: newOperation,
-    warning: warningMessage,
-  };
-
+  // Simple response without warning (checked earlier)
   return successResponce({
     res,
     status: 201,
-    message: warningMessage
-      ? 'Operation created successfully (with warning)'
-      : 'Operation created successfully',
-    data: responseData,
+    message: 'Operation created successfully',
+    data: newOperation,
   });
 });
 
