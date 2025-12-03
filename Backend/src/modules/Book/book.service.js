@@ -14,6 +14,7 @@ import categoryModel from '../../DB/models/category.model.js';
 import userModel from '../../DB/models/User.model.js';
 import Report from '../../DB/models/report.model.js';
 import { NotificationInstance } from '../../Gateways/notification.instance.js';
+import { getNotificationService } from '../../Gateways/soketio.gateway.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -1124,7 +1125,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
 /* ──────────────────────────────
    👑 Admin: Update Book Moderation Status
    - Allows admin to change book moderation status
-   - Admin can set IsModerated to true or false
+   - Sends notification to book owner about status change
 ────────────────────────────── */
 export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -1143,8 +1144,37 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Book not found', 404);
   }
 
+  // حفظ الحالة القديمة
+  const oldStatus = book.IsModerated;
+
+  // تحديث الحالة
   book.IsModerated = IsModerated;
   await book.save();
+
+  // ✅ إرسال إشعار لمالك الكتاب عن تغيير الحالة
+  try {
+    const notificationService = getNotificationService();
+
+    // فقط إذا تغيرت الحالة
+    if (oldStatus !== IsModerated) {
+      const notificationResult = await notificationService.sendBookModerationNotification(
+        book.UserID.toString(),
+        {
+          id: book._id,
+          title: book.Title,
+          oldStatus,
+          newStatus: IsModerated,
+        },
+        IsModerated // true = approved, false = rejected
+      );
+
+      console.log(`📢 Moderation status changed from ${oldStatus} to ${IsModerated}`);
+      console.log('Notification result:', notificationResult);
+    }
+  } catch (notificationError) {
+    console.error('❌ Failed to send moderation notification:', notificationError);
+    // لا نوقف العملية إذا فشل الإشعار
+  }
 
   res.json({
     success: true,
@@ -1153,6 +1183,7 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
       id: book._id,
       title: book.Title,
       IsModerated: book.IsModerated,
+      oldStatus,
       updatedBy: req.user._id,
       updatedAt: new Date(),
     },
@@ -1272,9 +1303,39 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
+  // استعادة الكتاب
   book.isDeleted = false;
+  book.deletedAt = undefined;
+  book.deletionReason = undefined;
   await book.save();
 
+  // ✅ **إرسال إشعار لمالك الكتاب عن الاستعادة**
+  try {
+    const notificationService = getNotificationService();
+    const notificationResult = await notificationService.sendBookRestoredNotification(
+      book.UserID.toString(),
+      {
+        type: 'book_restored',
+        title: 'Book Restored Successfully',
+        message: `Your book "${book.Title}" has been restored successfully and is now available on the platform.`,
+        data: {
+          bookId: book._id.toString(),
+          bookTitle: book.Title,
+          restoredAt: new Date().toISOString(),
+          categoryId: book.categoryId,
+          categoryName: category.name,
+        },
+      }
+    );
+
+    console.log(`✅ Restoration notification sent to book owner: ${book.UserID}`);
+    console.log('Notification result:', notificationResult);
+  } catch (notificationError) {
+    console.error('❌ Failed to send restoration notification:', notificationError);
+    // لا نوقف العملية إذا فشل الإشعار
+  }
+
+  // إرجاع الاستجابة
   res.json({
     success: true,
     message: '✅ Book restored successfully by admin',
@@ -1290,6 +1351,7 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
         id: category._id,
         name: category.name,
       },
+      notificationSent: true,
     },
   });
 });

@@ -315,4 +315,45 @@ export class NotificationService {
       return { success: false, error: error.message };
     }
   }
+
+  emitToUser(userId, event, data) {
+    const recipientSockets = getUserSockets(userId);
+    if (recipientSockets.length > 0) {
+      recipientSockets.forEach((socketId) => {
+        this.io.to(socketId).emit(event, data);
+      });
+      return { success: true, sentTo: recipientSockets.length };
+    }
+    return { success: false, reason: 'User not connected' };
+  }
+
+  sendBookRestoredNotification(userId, bookDetails) {
+    const notification = {
+      ...bookDetails,
+      timestamp: new Date().toISOString(),
+    };
+
+    return this.emitToUser(userId, 'book-restored', notification);
+  }
+
+  async sendBookModerationNotification(userId, bookDetails, isApproved) {
+    const notificationType = isApproved ? 'book_approved' : 'book_rejected';
+    const message = isApproved
+      ? `Your book "${bookDetails.title}" has been approved and is now available on the platform.`
+      : `Your book "${bookDetails.title}" has been rejected and will be reviewed. It can be restored if it doesn't violate our policies.`;
+    const notification = {
+      type: notificationType,
+      title: isApproved ? 'Book Approved' : 'Book Rejected',
+      message,
+      data: {
+        bookId: bookDetails.id,
+        bookTitle: bookDetails.title,
+        updatedAt: new Date().toISOString(),
+        isApproved,
+      },
+      createdAt: new Date().toISOString(),
+    };
+
+    return this.emitToUser(userId, notificationType, notification);
+  }
 }
