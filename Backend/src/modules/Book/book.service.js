@@ -13,6 +13,8 @@ import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import categoryModel from '../../DB/models/category.model.js';
 import userModel from '../../DB/models/User.model.js';
 import Report from '../../DB/models/report.model.js';
+import { NotificationInstance } from '../../Gateways/notification.instance.js';
+import { getNotificationService } from '../../Gateways/soketio.gateway.js';
 
 // Helper Function: Upload to Cloudinary
 const uploadToCloudinary = (fileBuffer, folder) => {
@@ -912,10 +914,11 @@ export const getBooksByUserId = asyncHandler(async (req, res) => {
 });
 
 /* ──────────────────────────────
-   👑 Admin: Delete Any Book
+   👑 Admin: Delete Any Book (with anonymous notifications)
    - Allows admin to delete any book regardless of owner
    - Uses soft delete to maintain records
    - Cancels any active operations for this book including completed borrows
+   - Sends notifications to book owner and users with active operations (without admin info)
 ────────────────────────────── */
 export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -930,15 +933,22 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   let terminatedBorrows = 0;
 
   // ─────────────────────────────────
-  // 1️⃣ Check for Active Operations (Pending/Accepted) and Cancel Them
+  // 1️⃣ Get all affected users (for notifications)
   // ─────────────────────────────────
-  const activeOperations = await operationModel.find({
-    book_dest_id: id,
-    status: {
-      $in: [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED],
-    },
-    isDeleted: false,
-  });
+  const allAffectedOperations = await operationModel
+    .find({
+      book_dest_id: id,
+      isDeleted: false,
+    })
+    .populate('user_src', 'firstName secondName email')
+    .populate('user_dest', 'firstName secondName email');
+
+  // ─────────────────────────────────
+  // 2️⃣ Check for Active Operations (Pending/Accepted) and Cancel Them
+  // ─────────────────────────────────
+  const activeOperations = allAffectedOperations.filter((op) =>
+    [operationStatusEnum.PENDING, operationStatusEnum.ACCEPTED].includes(op.status)
+  );
 
   if (activeOperations.length > 0) {
     await operationModel.updateMany(
@@ -953,6 +963,8 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
         $set: {
           status: operationStatusEnum.REJECTED,
           isDeleted: true,
+          cancelledAt: new Date(),
+          cancellationReason: 'Book deleted by admin',
         },
       }
     );
@@ -962,16 +974,15 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   }
 
   // ─────────────────────────────────
-  // 2️⃣ Check for Completed Borrow Operations That Are Still Active
+  // 3️⃣ Check for Completed Borrow Operations That Are Still Active
   // ─────────────────────────────────
-  const activeBorrows = await operationModel.find({
-    book_dest_id: id,
-    operationType: operationTypeEnum.BORROW,
-    status: operationStatusEnum.COMPLETED,
-    isDeleted: false,
-    startDate: { $lte: currentDate },
-    endDate: { $gte: currentDate },
-  });
+  const activeBorrows = allAffectedOperations.filter(
+    (op) =>
+      op.operationType === operationTypeEnum.BORROW &&
+      op.status === operationStatusEnum.COMPLETED &&
+      op.startDate <= currentDate &&
+      op.endDate >= currentDate
+  );
 
   if (activeBorrows.length > 0) {
     await operationModel.updateMany(
@@ -987,6 +998,8 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
         $set: {
           endDate: currentDate,
           isDeleted: true,
+          cancelledAt: new Date(),
+          cancellationReason: 'Book deleted by admin during active borrow',
         },
       }
     );
@@ -996,11 +1009,92 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
   }
 
   // ─────────────────────────────────
-  // 3️⃣ Soft Delete the Book
+  // 4️⃣ Soft Delete the Book
   // ─────────────────────────────────
   book.isDeleted = true;
+  book.deletedAt = new Date();
+  book.deletionReason = 'inappropriate_content';
   await book.save();
 
+  // ─────────────────────────────────
+  // 5️⃣ Send Notifications (Anonymous - without admin info)
+  // ─────────────────────────────────
+  console.log(`📢 Sending anonymous notifications for deleted book ${id}`);
+
+  // أ) إشعار لمالك الكتاب (بدون ذكر اسم الأدمن)
+  try {
+    await NotificationInstance.notifyUser(book.UserID.toString(), 'book-deleted', {
+      type: 'book_deletion',
+      bookId: id,
+      bookTitle: book.Title,
+      reason: 'inappropriate_content',
+      message: `Your book "${book.Title}" has been removed from the platform due to violation of community guidelines.`,
+      deletedAt: new Date(),
+      // Note: No admin info included
+      note: 'The book was found to contain inappropriate content that violates our terms of service.',
+    });
+    console.log(`✅ Notification sent to book owner: ${book.UserID}`);
+  } catch (error) {
+    console.error('❌ Failed to send notification to book owner:', error);
+  }
+
+  // ب) إشعار لكل مستخدم كان في عملية نشطة على هذا الكتاب (بدون ذكر اسم الأدمن)
+  const allAffectedUsers = new Set();
+
+  // جمع كل المستخدمين المتأثرين
+  allAffectedOperations.forEach((operation) => {
+    if (operation.user_src && operation.user_src._id.toString() !== book.UserID.toString()) {
+      allAffectedUsers.add({
+        userId: operation.user_src._id.toString(),
+        userName: `${operation.user_src.firstName} ${operation.user_src.secondName}`,
+        operationType: operation.operationType,
+        operationId: operation._id.toString(),
+        userRole: 'requester', // يطلب الكتاب
+      });
+    }
+
+    if (operation.user_dest && operation.user_dest._id.toString() !== book.UserID.toString()) {
+      allAffectedUsers.add({
+        userId: operation.user_dest._id.toString(),
+        userName: `${operation.user_dest.firstName} ${operation.user_dest.secondName}`,
+        operationType: operation.operationType,
+        operationId: operation._id.toString(),
+        userRole: 'receiver', // يستقبل طلب الكتاب
+      });
+    }
+  });
+
+  // إرسال إشعار لكل مستخدم متأثر
+  for (const user of Array.from(allAffectedUsers)) {
+    try {
+      // رسالة مختلفة بناءً على دور المستخدم
+      let message = '';
+      if (user.userRole === 'requester') {
+        message = `Your ${user.operationType} request for the book "${book.Title}" has been cancelled because the book was removed from the platform due to inappropriate content.`;
+      } else {
+        message = `The ${user.operationType} operation for the book "${book.Title}" has been cancelled because the book was removed from the platform.`;
+      }
+
+      await NotificationInstance.notifyUser(user.userId, 'operation-cancelled', {
+        type: 'operation_cancellation',
+        bookId: id,
+        bookTitle: book.Title,
+        operationId: user.operationId,
+        operationType: user.operationType,
+        reason: 'book_removed',
+        message: message,
+        cancelledAt: new Date(),
+        note: 'The book was found to violate community guidelines and has been removed.',
+      });
+      console.log(`✅ Notification sent to affected user: ${user.userName}`);
+    } catch (error) {
+      console.error(`❌ Failed to send notification to user ${user.userId}:`, error);
+    }
+  }
+
+  // ─────────────────────────────────
+  // 6️⃣ Return Response (مع تفاصيل الأدمن في الـ response فقط)
+  // ─────────────────────────────────
   const totalCancelled = cancelledOperations + terminatedBorrows;
 
   res.json({
@@ -1011,10 +1105,19 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
     deletedBook: {
       id: book._id,
       title: book.Title,
-      deletedBy: req.user._id,
+      deletionReason: 'inappropriate_content',
       cancelledOperations: cancelledOperations,
       terminatedBorrows: terminatedBorrows,
       totalCancelled: totalCancelled,
+      notificationsSent: {
+        toBookOwner: true,
+        toAffectedUsers: Array.from(allAffectedUsers).length,
+      },
+      // هذه المعلومات فقط للأدمن، ما بتظهر للمستخدمين
+      adminInfo: {
+        deletedBy: req.user._id,
+        timestamp: new Date(),
+      },
     },
   });
 });
@@ -1022,7 +1125,7 @@ export const adminDeleteBook = asyncHandler(async (req, res, next) => {
 /* ──────────────────────────────
    👑 Admin: Update Book Moderation Status
    - Allows admin to change book moderation status
-   - Admin can set IsModerated to true or false
+   - Sends notification to book owner about status change
 ────────────────────────────── */
 export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
@@ -1041,8 +1144,37 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
     throw new AppError('❌ Book not found', 404);
   }
 
+  // حفظ الحالة القديمة
+  const oldStatus = book.IsModerated;
+
+  // تحديث الحالة
   book.IsModerated = IsModerated;
   await book.save();
+
+  // ✅ إرسال إشعار لمالك الكتاب عن تغيير الحالة
+  try {
+    const notificationService = getNotificationService();
+
+    // فقط إذا تغيرت الحالة
+    if (oldStatus !== IsModerated) {
+      const notificationResult = await notificationService.sendBookModerationNotification(
+        book.UserID.toString(),
+        {
+          id: book._id,
+          title: book.Title,
+          oldStatus,
+          newStatus: IsModerated,
+        },
+        IsModerated // true = approved, false = rejected
+      );
+
+      console.log(`📢 Moderation status changed from ${oldStatus} to ${IsModerated}`);
+      console.log('Notification result:', notificationResult);
+    }
+  } catch (notificationError) {
+    console.error('❌ Failed to send moderation notification:', notificationError);
+    // لا نوقف العملية إذا فشل الإشعار
+  }
 
   res.json({
     success: true,
@@ -1051,6 +1183,7 @@ export const adminUpdateModeration = asyncHandler(async (req, res, next) => {
       id: book._id,
       title: book.Title,
       IsModerated: book.IsModerated,
+      oldStatus,
       updatedBy: req.user._id,
       updatedAt: new Date(),
     },
@@ -1170,9 +1303,39 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
     });
   }
 
+  // استعادة الكتاب
   book.isDeleted = false;
+  book.deletedAt = undefined;
+  book.deletionReason = undefined;
   await book.save();
 
+  // ✅ **إرسال إشعار لمالك الكتاب عن الاستعادة**
+  try {
+    const notificationService = getNotificationService();
+    const notificationResult = await notificationService.sendBookRestoredNotification(
+      book.UserID.toString(),
+      {
+        type: 'book_restored',
+        title: 'Book Restored Successfully',
+        message: `Your book "${book.Title}" has been restored successfully and is now available on the platform.`,
+        data: {
+          bookId: book._id.toString(),
+          bookTitle: book.Title,
+          restoredAt: new Date().toISOString(),
+          categoryId: book.categoryId,
+          categoryName: category.name,
+        },
+      }
+    );
+
+    console.log(`✅ Restoration notification sent to book owner: ${book.UserID}`);
+    console.log('Notification result:', notificationResult);
+  } catch (notificationError) {
+    console.error('❌ Failed to send restoration notification:', notificationError);
+    // لا نوقف العملية إذا فشل الإشعار
+  }
+
+  // إرجاع الاستجابة
   res.json({
     success: true,
     message: '✅ Book restored successfully by admin',
@@ -1188,6 +1351,7 @@ export const adminRestoreBook = asyncHandler(async (req, res, next) => {
         id: category._id,
         name: category.name,
       },
+      notificationSent: true,
     },
   });
 });

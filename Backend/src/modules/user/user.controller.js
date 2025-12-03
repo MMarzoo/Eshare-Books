@@ -22,6 +22,8 @@ import {
 } from '../../enum.js';
 import bookmodel from '../../DB/models/bookmodel.js';
 import operationModel from '../../DB/models/operation.model.js';
+import { getNotificationService } from '../../Gateways/soketio.gateway.js';
+import { sendEmailEvent } from '../../Events/sendEmail.event.js';
 
 // Create User
 export const createUser = asyncHandler(async (req, res, next) => {
@@ -173,6 +175,9 @@ export const updateUser = asyncHandler(async (req, res, next) => {
     }
   }
 
+  // Check if role is being changed to admin
+  const isRoleChangedToAdmin = role === 'admin' && existingUser.role !== 'admin';
+
   // Update user
   const updatedUser = await update({
     model: userModel,
@@ -187,6 +192,34 @@ export const updateUser = asyncHandler(async (req, res, next) => {
     },
     options: { new: true },
   });
+
+  // Send notification if role changed to admin
+  if (isRoleChangedToAdmin) {
+    try {
+      const notificationService = getNotificationService();
+
+      if (notificationService) {
+        await notificationService.emitToUser(id, 'role-updated', {
+          type: 'role_promoted',
+          title: 'Congratulations!',
+          message: `You have been promoted to Administrator role by the admin. You now have access to admin dashboard and privileges.`,
+          data: {
+            userId: id,
+            oldRole: existingUser.role,
+            newRole: 'admin',
+            promotedAt: new Date().toISOString(),
+            promotedBy: req.user._id,
+          },
+          createdAt: new Date().toISOString(),
+        });
+
+        console.log(`✅ Admin promotion notification sent to user: ${id}`);
+      }
+    } catch (notificationError) {
+      console.error('❌ Failed to send role promotion notification:', notificationError);
+      // Don't stop the process if notification fails
+    }
+  }
 
   // Remove password from response
   const userResponse = updatedUser.toObject();
@@ -283,15 +316,13 @@ export const changePassword = asyncHandler(async (req, res, next) => {
   });
 });
 
-// Delete User - UPDATED
+// Delete User - UPDATED with email and notifications
 export const deleteUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
+  const adminName = `${req.user.firstName} ${req.user.secondName}`;
 
   // Check if user exists
-  const user = await findById({
-    model: userModel,
-    id: id,
-  });
+  const user = await userModel.findById(id);
 
   if (!user) {
     return next(new Error('User not found', { cause: 404 }));
@@ -307,6 +338,23 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
   let terminatedBorrows = 0;
   let deletedBooks = 0;
 
+  // ✅ الحصول على جميع العمليات النشطة المرتبطة بالمستخدم (قبل الحذف)
+  const userActiveOperations = await operationModel
+    .find({
+      $or: [{ user_src: id }, { user_dest: id }],
+      isDeleted: false,
+      status: {
+        $in: [
+          operationStatusEnum.PENDING,
+          operationStatusEnum.ACCEPTED,
+          operationStatusEnum.COMPLETED,
+        ],
+      },
+    })
+    .populate('user_src', 'firstName secondName email')
+    .populate('user_dest', 'firstName secondName email')
+    .populate('book_dest_id', 'Title');
+
   // ─────────────────────────────────
   // 1️⃣ Delete User's Books and Their Operations
   // ─────────────────────────────────
@@ -316,6 +364,7 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
   });
 
   if (userBooks.length > 0) {
+    // تحديث حالة الكتب إلى محذوفة
     await bookmodel.updateMany({ UserID: id, isDeleted: false }, { $set: { isDeleted: true } });
     deletedBooks = userBooks.length;
 
@@ -506,12 +555,36 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
   }
 
   // ─────────────────────────────────
-  // 6️⃣ Delete User
+  // 6️⃣ إرسال إيميل للمستخدم المحذوف فقط (بدون اسم الأدمن)
   // ─────────────────────────────────
-  await deleteOne({
-    model: userModel,
-    filter: { _id: id },
-  });
+  let emailSent = false;
+  try {
+    sendEmailEvent.emit('userDeletedByAdmin', {
+      userEmail: user.email,
+      userName: `${user.firstName} ${user.secondName}`,
+      reason: 'violation of platform policies',
+    });
+
+    emailSent = true;
+    console.log(`📧 Admin deletion email sent to ${user.email} (without admin name)`);
+  } catch (emailError) {
+    console.error('Failed to send deletion email:', emailError);
+  }
+  // ─────────────────────────────────
+  // 7️⃣ إرسال إشعارات فقط (بدون إيميلات) للمستخدمين المتأثرين
+  // ─────────────────────────────────
+  let notificationsSent = false;
+  try {
+    await sendUserDeletionNotifications(user, userActiveOperations);
+    notificationsSent = true;
+  } catch (notificationError) {
+    console.error('Failed to send notifications:', notificationError);
+  }
+
+  // ─────────────────────────────────
+  // 8️⃣ Delete User
+  // ─────────────────────────────────
+  await userModel.findByIdAndDelete(id);
 
   const totalCancelled = cancelledOperations + terminatedBorrows;
 
@@ -525,11 +598,111 @@ export const deleteUser = asyncHandler(async (req, res, next) => {
       cancelledOperations: cancelledOperations,
       terminatedBorrows: terminatedBorrows,
       totalCancelled: totalCancelled,
+      emailSent: emailSent,
+      notificationsSent: notificationsSent,
+      userDetails: {
+        id: user._id,
+        name: `${user.firstName} ${user.secondName}`,
+        email: user.email,
+        deletedAt: new Date().toISOString(),
+        deletedBy: {
+          adminId: req.user._id,
+          adminName: adminName,
+        },
+      },
     },
   });
 });
 
-// Confirm User (for admin) - UPDATED
+/**
+ * دالة مساعدة لإرسال إشعارات فقط (بدون إيميلات) للمستخدمين المتأثرين
+ */
+const sendUserDeletionNotifications = async (deletedUser, activeOperations) => {
+  try {
+    const notificationService = getNotificationService();
+
+    if (!notificationService) {
+      console.error('❌ Notification service not available');
+      return;
+    }
+
+    const deletedUserId = deletedUser._id.toString();
+    const deletedUserName = `${deletedUser.firstName} ${deletedUser.secondName}`;
+    const deletedUserEmail = deletedUser.email;
+
+    const affectedUsers = new Set();
+
+    // جمع جميع المستخدمين المتأثرين (باستثناء المستخدم المحذوف)
+    activeOperations.forEach((operation) => {
+      // إضافة user_src إذا لم يكن هو المستخدم المحذوف
+      if (operation.user_src && operation.user_src._id.toString() !== deletedUserId) {
+        affectedUsers.add({
+          userId: operation.user_src._id.toString(),
+          userName: `${operation.user_src.firstName} ${operation.user_src.secondName}`,
+          userEmail: operation.user_src.email,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          bookTitle: operation.book_dest_id?.Title || 'Unknown Book',
+          role: 'counterparty',
+        });
+      }
+
+      // إضافة user_dest إذا لم يكن هو المستخدم المحذوف
+      if (operation.user_dest && operation.user_dest._id.toString() !== deletedUserId) {
+        affectedUsers.add({
+          userId: operation.user_dest._id.toString(),
+          userName: `${operation.user_dest.firstName} ${operation.user_dest.secondName}`,
+          userEmail: operation.user_dest.email,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          bookTitle: operation.book_dest_id?.Title || 'Unknown Book',
+          role: 'counterparty',
+        });
+      }
+    });
+
+    // إرسال إشعار WebSocket فقط لكل مستخدم متأثر (بدون إيميلات)
+    for (const user of Array.from(affectedUsers)) {
+      try {
+        const message =
+          user.bookTitle !== 'Unknown Book'
+            ? `Your ${user.operationType} operation for the book "${user.bookTitle}" with user "${deletedUserName}" has been cancelled because the user was deleted by an admin.`
+            : `Your operation with user "${deletedUserName}" has been cancelled because the user was deleted by an admin.`;
+
+        // إرسال إشعار عبر WebSocket فقط
+        await notificationService.emitToUser(user.userId, 'operation-cancelled', {
+          type: 'operation_cancellation',
+          operationId: user.operationId,
+          operationType: user.operationType,
+          reason: 'user_deleted_by_admin',
+          message,
+          cancelledAt: new Date().toISOString(),
+          note: 'This action was taken by an administrator.',
+          affectedParties: {
+            deletedUser: {
+              id: deletedUserId,
+              name: deletedUserName,
+              email: deletedUserEmail,
+            },
+            yourRole: user.role,
+          },
+        });
+
+        console.log(`✅ Admin deletion notification sent to: ${user.userName} (WebSocket only)`);
+      } catch (error) {
+        console.error(`❌ Failed to send notification to user ${user.userId}:`, error);
+      }
+    }
+
+    console.log(`✅ Total ${affectedUsers.size} users notified via WebSocket only`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error sending admin deletion notifications:', error);
+    return false;
+  }
+};
+
+// Confirm User (for admin) - UPDATED with email notification
 export const confirmUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
@@ -553,9 +726,28 @@ export const confirmUser = asyncHandler(async (req, res, next) => {
     options: { new: true },
   });
 
+  // ─────────────────────────────────
+  // إرسال إيميل تأكيد للمستخدم
+  // ─────────────────────────────────
+  let emailSent = false;
+  try {
+    sendEmailEvent.emit('userConfirmedByAdmin', {
+      userEmail: user.email,
+      userName: `${user.firstName} ${user.secondName}`,
+    });
+
+    emailSent = true;
+    console.log(`📧 Confirmation email sent to ${user.email}`);
+  } catch (emailError) {
+    console.error('Failed to send confirmation email:', emailError);
+  }
+
   // Remove password from response
   const userResponse = updatedUser.toObject();
   delete userResponse.password;
+
+  // إضافة حالة الإيميل للاستجابة
+  userResponse.emailSent = emailSent;
 
   return successResponce({
     res,
