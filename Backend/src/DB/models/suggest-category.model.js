@@ -1,4 +1,3 @@
-// models/suggest-category.model.js
 import mongoose from 'mongoose';
 
 const suggestCategorySchema = new mongoose.Schema(
@@ -16,6 +15,24 @@ const suggestCategorySchema = new mongoose.Schema(
     isDeleted: {
       type: Boolean,
       default: false,
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'accepted', 'rejected'],
+      default: 'pending',
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+    },
+    deletedAt: {
+      type: Date,
+    },
+    acceptedAt: {
+      type: Date,
+    },
+    rejectedAt: {
+      type: Date,
     },
   },
   {
