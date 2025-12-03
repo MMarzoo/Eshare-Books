@@ -236,10 +236,10 @@ export class NotificationService {
   }
 
   // SEND PAYMENT SUCCESS NOTIFICATION
-  async sendPaymentSuccessNotification(userId, operation) {
-    const recipientSockets = getUserSockets(userId);
-
-    const successNotification = {
+  async sendPaymentSuccessNotification(buyerId, ownerId, operation) {
+    // Buyer notification
+    const buyerSockets = getUserSockets(buyerId);
+    const buyerNotification = {
       type: "payment-success",
       message: "Your payment was completed successfully.",
       operationID: operation._id.toString(),
@@ -247,8 +247,22 @@ export class NotificationService {
       createdAt: new Date().toISOString(),
     };
 
-    recipientSockets.forEach((socketId) => {
-      this.io.to(socketId).emit("new-notification", successNotification);
+    buyerSockets.forEach((socketId) => {
+      this.io.to(socketId).emit("new-notification", buyerNotification);
+    });
+
+    // Owner notification
+    const ownerSockets = getUserSockets(ownerId);
+    const ownerNotification = {
+      type: "payment-received",
+      message: "The payment for your book has been completed.",
+      operationID: operation._id.toString(),
+      amount: operation.totalPrice,
+      createdAt: new Date().toISOString(),
+    };
+
+    ownerSockets.forEach((socketId) => {
+      this.io.to(socketId).emit("new-notification", ownerNotification);
     });
   }
 
