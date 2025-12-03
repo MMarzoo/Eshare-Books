@@ -8,13 +8,14 @@ import Book from '../../DB/models/bookmodel.js';
 import operationModel from '../../DB/models/operation.model.js';
 import userModel from '../../DB/models/User.model.js';
 import { sendEmailEvent } from '../../Events/sendEmail.event.js';
+import { getNotificationService } from '../../Gateways/soketio.gateway.js';
 
 /**
- * دالة مساعدة لحذف الكتاب عند 3 إبلاغات
+ * دالة مساعدة لحذف الكتاب عند 3 إبلاغات مع إرسال الإشعارات
  */
 const deleteBookDueToReports = async (bookId) => {
   try {
-    const book = await Book.findOne({ _id: bookId, isDeleted: false });
+    const book = await Book.findOne({ _id: bookId, isDeleted: false }).populate('UserID');
 
     if (!book) {
       return { success: false, message: 'Book already deleted or not found' };
@@ -33,6 +34,23 @@ const deleteBookDueToReports = async (bookId) => {
 
     const currentDate = new Date();
 
+    // الحصول على جميع العمليات النشطة على هذا الكتاب
+    const activeOperations = await operationModel
+      .find({
+        book_dest_id: bookId,
+        isDeleted: false,
+        status: {
+          $in: [
+            operationStatusEnum.PENDING,
+            operationStatusEnum.ACCEPTED,
+            operationStatusEnum.COMPLETED,
+          ],
+        },
+      })
+      .populate('user_src')
+      .populate('user_dest');
+
+    // تحديث عمليات PENDING و ACCEPTED
     await operationModel.updateMany(
       {
         book_dest_id: bookId,
@@ -47,6 +65,7 @@ const deleteBookDueToReports = async (bookId) => {
       }
     );
 
+    // تحديث عمليات BORROW النشطة
     await operationModel.updateMany(
       {
         book_dest_id: bookId,
@@ -69,15 +88,104 @@ const deleteBookDueToReports = async (bookId) => {
 
     console.log(`🚨 Book ${bookId} deleted due to 3 reviewed reports`);
 
+    // ✅ إرسال الإشعارات
+    await sendBookDeletionNotifications(book, activeOperations);
+
     return {
       success: true,
       message: 'Book automatically deleted due to 3 reviewed reports',
       bookTitle: book.Title,
       deletionDate: currentDate,
+      notificationsSent: true,
     };
   } catch (error) {
     console.error('Error deleting book due to reports:', error);
     return { success: false, message: error.message };
+  }
+};
+
+/**
+ * دالة مساعدة لإرسال إشعارات حذف الكتاب
+ */
+const sendBookDeletionNotifications = async (book, activeOperations) => {
+  try {
+    const notificationService = getNotificationService();
+
+    if (!notificationService) {
+      console.error('❌ Notification service not available');
+      return;
+    }
+
+    // 1️⃣ إشعار لمالك الكتاب
+    const bookOwnerId = book.UserID._id.toString();
+
+    await notificationService.emitToUser(bookOwnerId, 'book-deleted', {
+      type: 'book_deletion',
+      bookId: book._id.toString(),
+      bookTitle: book.Title,
+      reason: 'multiple_reports',
+      message: `Your book "${book.Title}" has been automatically deleted due to receiving 3 reviewed reports.`,
+      deletedAt: new Date().toISOString(),
+      note: 'Book was removed after receiving multiple policy violation reports.',
+    });
+
+    console.log(`✅ Book deletion notification sent to owner: ${bookOwnerId}`);
+
+    // 2️⃣ إشعار لكل مستخدم كان في عملية نشطة مع هذا الكتاب
+    const affectedUsers = new Set();
+
+    // جمع جميع المستخدمين المتأثرين (باستثناء مالك الكتاب)
+    activeOperations.forEach((operation) => {
+      if (operation.user_src && operation.user_src._id.toString() !== bookOwnerId) {
+        affectedUsers.add({
+          userId: operation.user_src._id.toString(),
+          userName: `${operation.user_src.firstName} ${operation.user_src.secondName}`,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          role: 'requester',
+        });
+      }
+
+      if (operation.user_dest && operation.user_dest._id.toString() !== bookOwnerId) {
+        affectedUsers.add({
+          userId: operation.user_dest._id.toString(),
+          userName: `${operation.user_dest.firstName} ${operation.user_dest.secondName}`,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          role: 'receiver',
+        });
+      }
+    });
+
+    // إرسال إشعار لكل مستخدم متأثر
+    for (const user of Array.from(affectedUsers)) {
+      try {
+        const message =
+          user.role === 'requester'
+            ? `Your ${user.operationType} request for the book "${book.Title}" has been cancelled because the book was automatically deleted due to multiple reports.`
+            : `The ${user.operationType} operation for the book "${book.Title}" has been cancelled because the book was automatically deleted due to multiple reports.`;
+
+        await notificationService.emitToUser(user.userId, 'operation-cancelled', {
+          type: 'operation_cancellation',
+          bookId: book._id.toString(),
+          bookTitle: book.Title,
+          operationId: user.operationId,
+          operationType: user.operationType,
+          reason: 'book_auto_deleted',
+          message,
+          cancelledAt: new Date().toISOString(),
+          note: 'This action was taken automatically due to multiple policy violation reports.',
+        });
+
+        console.log(`✅ Operation cancellation notification sent to user: ${user.userName}`);
+      } catch (error) {
+        console.error(`❌ Failed to send notification to user ${user.userId}:`, error);
+      }
+    }
+
+    console.log(`✅ Total ${affectedUsers.size} users notified about book deletion`);
+  } catch (error) {
+    console.error('❌ Error sending book deletion notifications:', error);
   }
 };
 
@@ -102,6 +210,23 @@ const deleteUserDueToReports = async (userId) => {
     let terminatedBorrows = 0;
 
     console.log(`🚨 Starting auto-deletion for user ${userId} due to 3 reviewed reports`);
+
+    // ✅ الحصول على جميع العمليات النشطة التي يكون المستخدم طرفاً فيها (قبل الحذف)
+    const userActiveOperations = await operationModel
+      .find({
+        $or: [{ user_src: userId }, { user_dest: userId }],
+        isDeleted: false,
+        status: {
+          $in: [
+            operationStatusEnum.PENDING,
+            operationStatusEnum.ACCEPTED,
+            operationStatusEnum.COMPLETED,
+          ],
+        },
+      })
+      .populate('user_src')
+      .populate('user_dest')
+      .populate('book_dest_id');
 
     // 1️⃣ حذف جميع كتب المستخدم (Soft Delete) وإلغاء عملياتها
     const userBooks = await Book.find({
@@ -306,8 +431,10 @@ const deleteUserDueToReports = async (userId) => {
       console.log(`📧 Deletion email sent to ${user.email}`);
     } catch (emailError) {
       console.error('Failed to send deletion email:', emailError);
-      // لا نوقف العملية إذا فشل إرسال البريد الإلكتروني
     }
+
+    // ✅ إرسال الإشعارات للمستخدمين المتأثرين
+    await sendUserDeletionNotifications(user, userActiveOperations);
 
     const totalCancelled = cancelledOperations + terminatedBorrows;
 
@@ -324,11 +451,86 @@ const deleteUserDueToReports = async (userId) => {
         totalCancelled,
         deletionDate: currentDate,
         emailSent: true,
+        notificationsSent: true,
       },
     };
   } catch (error) {
     console.error('❌ Error deleting user due to reports:', error);
     return { success: false, message: error.message };
+  }
+};
+
+/**
+ * دالة مساعدة لإرسال إشعارات حذف المستخدم
+ */
+const sendUserDeletionNotifications = async (deletedUser, activeOperations) => {
+  try {
+    const notificationService = getNotificationService();
+
+    if (!notificationService) {
+      console.error('❌ Notification service not available');
+      return;
+    }
+
+    const deletedUserId = deletedUser._id.toString();
+    const deletedUserName = `${deletedUser.firstName} ${deletedUser.secondName}`;
+
+    const affectedUsers = new Set();
+
+    // جمع جميع المستخدمين المتأثرين (باستثناء المستخدم المحذوف)
+    activeOperations.forEach((operation) => {
+      // إضافة user_src إذا لم يكن هو المستخدم المحذوف
+      if (operation.user_src && operation.user_src._id.toString() !== deletedUserId) {
+        affectedUsers.add({
+          userId: operation.user_src._id.toString(),
+          userName: `${operation.user_src.firstName} ${operation.user_src.secondName}`,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          bookTitle: operation.book_dest_id?.Title || 'Unknown Book',
+          role: 'counterparty',
+        });
+      }
+
+      // إضافة user_dest إذا لم يكن هو المستخدم المحذوف
+      if (operation.user_dest && operation.user_dest._id.toString() !== deletedUserId) {
+        affectedUsers.add({
+          userId: operation.user_dest._id.toString(),
+          userName: `${operation.user_dest.firstName} ${operation.user_dest.secondName}`,
+          operationType: operation.operationType,
+          operationId: operation._id.toString(),
+          bookTitle: operation.book_dest_id?.Title || 'Unknown Book',
+          role: 'counterparty',
+        });
+      }
+    });
+
+    // إرسال إشعار لكل مستخدم متأثر
+    for (const user of Array.from(affectedUsers)) {
+      try {
+        const message =
+          user.bookTitle !== 'Unknown Book'
+            ? `Your ${user.operationType} operation for the book "${user.bookTitle}" with user "${deletedUserName}" has been cancelled because the user was automatically deleted due to multiple reports.`
+            : `Your operation with user "${deletedUserName}" has been cancelled because the user was automatically deleted due to multiple reports.`;
+
+        await notificationService.emitToUser(user.userId, 'operation-cancelled', {
+          type: 'operation_cancellation',
+          operationId: user.operationId,
+          operationType: user.operationType,
+          reason: 'user_auto_deleted',
+          message,
+          cancelledAt: new Date().toISOString(),
+          note: 'This action was taken automatically due to multiple policy violation reports against the user.',
+        });
+
+        console.log(`✅ User deletion notification sent to: ${user.userName}`);
+      } catch (error) {
+        console.error(`❌ Failed to send notification to user ${user.userId}:`, error);
+      }
+    }
+
+    console.log(`✅ Total ${affectedUsers.size} users notified about user deletion`);
+  } catch (error) {
+    console.error('❌ Error sending user deletion notifications:', error);
   }
 };
 
@@ -531,6 +733,11 @@ export const getReportsAgainstUser = asyncHandler(async (req, res, next) => {
  * @route PATCH /reports/:id
  * @access Admin
  */
+/**
+ * @desc Update report status (Admin only)
+ * @route PATCH /reports/:id
+ * @access Admin
+ */
 export const updateReportStatus = asyncHandler(async (req, res, next) => {
   const { status } = req.body;
   const { id } = req.params;
@@ -540,11 +747,158 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid status value.', 400));
   }
 
-  const report = await Report.findByIdAndUpdate(id, { status }, { new: true })
-    .populate('reporterId')
-    .populate('targetId');
+  // إيجاد التقرير مع جميع البيانات المطلوبة
+  const report = await Report.findById(id).populate('reporterId', 'firstName secondName email');
 
   if (!report) return next(new AppError('Report not found.', 404));
+
+  // تحميل targetId بناءً على نوعه
+  if (report.targetType === 'user') {
+    await report.populate({
+      path: 'targetId',
+      select: 'firstName secondName email',
+      model: 'user',
+    });
+  } else if (report.targetType === 'Book') {
+    await report.populate({
+      path: 'targetId',
+      select: 'Title UserID',
+      model: 'Book',
+    });
+  }
+
+  // حفظ الحالة القديمة
+  const oldStatus = report.status;
+
+  // تحديث الحالة
+  report.status = status;
+  await report.save();
+
+  // ✅ إرسال إشعارات بناءً على الحالة الجديدة
+  try {
+    const notificationService = getNotificationService();
+
+    if (notificationService) {
+      // 1️⃣ إذا كانت الحالة الجديدة "Reviewed" (تمت المراجعة)
+      if (status === 'Reviewed') {
+        // تحديد اسم الهدف بناءً على النوع
+        let targetName = '';
+        if (report.targetType === 'user') {
+          targetName = `${report.targetId.firstName} ${report.targetId.secondName}`;
+        } else if (report.targetType === 'Book') {
+          targetName = report.targetId.Title;
+        }
+
+        // أ) إشعار للمستخدم الذي أبلغ (reporterId)
+        await notificationService.emitToUser(
+          report.reporterId._id.toString(),
+          'report-status-updated',
+          {
+            type: 'report_reviewed',
+            title: 'Report Reviewed',
+            message: `Your report about "${targetName}" has been reviewed and confirmed by the admin.`,
+            data: {
+              reportId: report._id.toString(),
+              targetType: report.targetType,
+              targetName: targetName,
+              reason: report.reason,
+              status: 'Reviewed',
+              reviewedAt: new Date().toISOString(),
+            },
+            createdAt: new Date().toISOString(),
+          }
+        );
+        console.log(`✅ Reviewed notification sent to reporter: ${report.reporterId._id}`);
+
+        // ب) إذا كان التقرير عن مستخدم، أرسل إشعار للمستخدم المبلغ عنه (targetId)
+        if (report.targetType === 'user') {
+          const reporterName = `${report.reporterId.firstName} ${report.reporterId.secondName}`;
+
+          await notificationService.emitToUser(
+            report.targetId._id.toString(),
+            'report-status-updated',
+            {
+              type: 'report_against_you_reviewed',
+              title: 'Report Against You Reviewed',
+              message: `A report about you from "${reporterName}" has been reviewed and confirmed by the admin. Note: If you receive 3 confirmed reports, your account will be deleted from the platform.`,
+              data: {
+                reportId: report._id.toString(),
+                reportedBy: reporterName,
+                reason: report.reason,
+                status: 'Reviewed',
+                reviewedAt: new Date().toISOString(),
+              },
+              createdAt: new Date().toISOString(),
+            }
+          );
+          console.log(`✅ Reviewed notification sent to reported user: ${report.targetId._id}`);
+        }
+        // ج) إذا كان التقرير عن كتاب، أرسل إشعار لمالك الكتاب
+        else if (report.targetType === 'Book') {
+          const bookOwnerId = report.targetId.UserID.toString();
+          const reporterName = `${report.reporterId.firstName} ${report.reporterId.secondName}`;
+
+          await notificationService.emitToUser(bookOwnerId, 'report-status-updated', {
+            type: 'book_report_reviewed',
+            title: 'Book Report Reviewed',
+            message: `A report about your book "${targetName}" from "${reporterName}" has been reviewed and confirmed by the admin. Note: If your book receives 3 confirmed reports, it will be deleted from the platform.`,
+            data: {
+              reportId: report._id.toString(),
+              bookId: report.targetId._id.toString(),
+              bookTitle: targetName,
+              reportedBy: reporterName,
+              reason: report.reason,
+              status: 'Reviewed',
+              reviewedAt: new Date().toISOString(),
+            },
+            createdAt: new Date().toISOString(),
+          });
+          console.log(`✅ Book report reviewed notification sent to owner: ${bookOwnerId}`);
+        }
+      }
+
+      // 2️⃣ إذا كانت الحالة الجديدة "Dismissed" (تم رفضها)
+      else if (status === 'Dismissed') {
+        // تحديد اسم الهدف بناءً على النوع
+        let targetName = '';
+        if (report.targetType === 'user') {
+          targetName = `${report.targetId.firstName} ${report.targetId.secondName}`;
+        } else if (report.targetType === 'Book') {
+          targetName = report.targetId.Title;
+        }
+
+        // إشعار فقط للمستخدم الذي أبلغ (reporterId)
+        await notificationService.emitToUser(
+          report.reporterId._id.toString(),
+          'report-status-updated',
+          {
+            type: 'report_dismissed',
+            title: 'Report Dismissed',
+            message: `Your report about "${targetName}" has been dismissed by the admin.`,
+            data: {
+              reportId: report._id.toString(),
+              targetType: report.targetType,
+              targetName: targetName,
+              reason: report.reason,
+              status: 'Dismissed',
+              dismissedAt: new Date().toISOString(),
+            },
+            createdAt: new Date().toISOString(),
+          }
+        );
+        console.log(`✅ Dismissed notification sent to reporter: ${report.reporterId._id}`);
+      }
+
+      // 3️⃣ إذا كانت الحالة "Pending" (قيد الانتظار) - اختياري
+      else if (status === 'Pending') {
+        console.log(`📝 Report status changed to Pending, no notification sent`);
+      }
+    } else {
+      console.error('❌ Notification service not available');
+    }
+  } catch (notificationError) {
+    console.error('❌ Failed to send report status notification:', notificationError);
+  }
 
   let autoDeletionResult = null;
 
@@ -553,37 +907,41 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
     try {
       const reviewedReportsCount = await Report.countDocuments({
         targetType: 'Book',
-        targetId: report.targetId,
+        targetId: report.targetId._id,
         status: 'Reviewed',
         isDeleted: false,
       });
 
-      console.log(`📊 Book ${report.targetId} now has ${reviewedReportsCount} reviewed reports`);
+      console.log(
+        `📊 Book ${report.targetId._id} now has ${reviewedReportsCount} reviewed reports`
+      );
 
       if (reviewedReportsCount >= 3) {
-        console.log(`🚨 Book ${report.targetId} reached 3 reviewed reports! Auto-deleting...`);
-        autoDeletionResult = await deleteBookDueToReports(report.targetId);
+        console.log(`🚨 Book ${report.targetId._id} reached 3 reviewed reports! Auto-deleting...`);
+        autoDeletionResult = await deleteBookDueToReports(report.targetId._id);
       }
     } catch (error) {
       console.error('Failed to check auto-deletion for book:', error);
     }
   }
 
-  // إذا كان التقرير عن مستخدم وتم تأكيده - ✅ إضافة هذا الجزء الجديد
+  // إذا كان التقرير عن مستخدم وتم تأكيده
   if (report.targetType === 'user' && status === 'Reviewed') {
     try {
       const reviewedReportsCount = await Report.countDocuments({
         targetType: 'user',
-        targetId: report.targetId,
+        targetId: report.targetId._id,
         status: 'Reviewed',
         isDeleted: false,
       });
 
-      console.log(`📊 User ${report.targetId} now has ${reviewedReportsCount} reviewed reports`);
+      console.log(
+        `📊 User ${report.targetId._id} now has ${reviewedReportsCount} reviewed reports`
+      );
 
       if (reviewedReportsCount >= 3) {
-        console.log(`🚨 User ${report.targetId} reached 3 reviewed reports! Auto-deleting...`);
-        autoDeletionResult = await deleteUserDueToReports(report.targetId);
+        console.log(`🚨 User ${report.targetId._id} reached 3 reviewed reports! Auto-deleting...`);
+        autoDeletionResult = await deleteUserDueToReports(report.targetId._id);
       }
     } catch (error) {
       console.error('Failed to check auto-deletion for user:', error);
@@ -591,6 +949,8 @@ export const updateReportStatus = asyncHandler(async (req, res, next) => {
   }
 
   const responseData = report.toObject();
+  responseData.oldStatus = oldStatus;
+  responseData.newStatus = status;
 
   if (autoDeletionResult) {
     responseData.autoDeletion = autoDeletionResult;
