@@ -8,7 +8,7 @@ export const sendEmail = ({
   html = '',
   attachments = {},
   cc = '',
-  appName = 'SarahaApp',
+  appName = 'Esharebook',
 }) => {
   // Create a test account or replace with real credentials.
   const transporter = nodemailer.createTransport({
@@ -469,8 +469,6 @@ export const resetPasswordTemplate = (resetCode, expiryTime = '15 minutes') => {
   `;
 };
 
-// ✅ إضافة هذا القالب بعد قالب resetPasswordTemplate
-
 export const userDeletedDueToReportsTemplate = (userName) => {
   const supportEmail = process.env.SUPPORT_EMAIL || 'support@esharebook.com';
   const currentDate = new Date().toLocaleDateString('en-US', {
@@ -608,6 +606,277 @@ export const userDeletedDueToReportsTemplate = (userName) => {
             <p>Thank you for your understanding.</p>
             
             <p>Sincerely,<br>
+            <strong>The Esharebook Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>&copy; ${new Date().getFullYear()} Esharebook. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+  `;
+};
+
+export const userDeletedByAdminTemplate = (userName, reason = 'policy violations') => {
+  const supportEmail = process.env.SUPPORT_EMAIL || 'support@esharebook.com';
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Deletion Notice</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 0;
+            background-color: #f8fafc;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            margin: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #dc2626, #ef4444);
+            padding: 30px;
+            text-align: center;
+            color: white;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .content {
+            padding: 30px;
+        }
+        .alert-box {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .details {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .footer {
+            background-color: #f1f5f9;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Esharebook</h1>
+            <p>Account Deletion Notice</p>
+        </div>
+        
+        <div class="content">
+            <h2>Dear ${userName},</h2>
+            
+            <div class="alert-box">
+                <p><strong>Important Notice:</strong> Your Esharebook account has been permanently deleted by an administrator due to ${reason}.</p>
+            </div>
+            
+            <p>This action was taken in accordance with our community guidelines and terms of service.</p>
+            
+            <div class="details">
+                <h3>Deletion Details:</h3>
+                <ul>
+                    <li><strong>Reason:</strong> ${reason}</li>
+                    <li><strong>Deletion Date:</strong> ${currentDate}</li>
+                    <li><strong>Action:</strong> Permanent account deletion</li>
+                </ul>
+            </div>
+            
+            <h3>What This Means:</h3>
+            <ul>
+                <li>Your account can no longer be accessed</li>
+                <li>All your books have been removed from the platform</li>
+                <li>Any active operations (borrows, sales, exchanges) have been cancelled</li>
+                <li>Your personal data has been permanently deleted from our systems</li>
+            </ul>
+            
+            <h3>If You Believe This Was a Mistake:</h3>
+            <p>If you think your account was deleted in error, you may contact our support team at <a href="mailto:${supportEmail}">${supportEmail}</a> for review. Please note that account restoration is only possible under exceptional circumstances.</p>
+            
+            <p>Sincerely,<br>
+            <strong>The Esharebook Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated message. Please do not reply to this email.</p>
+            <p>&copy; ${new Date().getFullYear()} Esharebook. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+  `;
+};
+
+export const userConfirmedTemplate = (userName) => {
+  const supportEmail = process.env.SUPPORT_EMAIL || 'support@esharebook.com';
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account Confirmed - Esharebook</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 0;
+            background-color: #f8fafc;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            margin: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #10b981, #34d399);
+            padding: 30px;
+            text-align: center;
+            color: white;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .content {
+            padding: 30px;
+        }
+        .success-box {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .details {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .footer {
+            background-color: #f1f5f9;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+        }
+        .button {
+            display: inline-block;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #10b981, #34d399);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 20px 0;
+            text-align: center;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Esharebook</h1>
+            <p>Account Confirmation</p>
+        </div>
+        
+        <div class="content">
+            <h2>Dear ${userName},</h2>
+            
+            <div class="success-box">
+                <p><strong>🎉 Great News!</strong> Your Esharebook account has been successfully confirmed by our administration team.</p>
+            </div>
+            
+            <p>Your account is now fully activated and you can enjoy all the features of our platform.</p>
+            
+            <div class="details">
+                <h3>Account Details:</h3>
+                <ul>
+                    <li><strong>Status:</strong> Confirmed ✅</li>
+                    <li><strong>Confirmation Date:</strong> ${currentDate}</li>
+                    <li><strong>Account Type:</strong> Full Access</li>
+                </ul>
+            </div>
+            
+            <h3>What You Can Do Now:</h3>
+            <ul>
+                <li>Browse and search books</li>
+                <li>Upload and share your own books</li>
+                <li>Borrow, buy, or exchange books</li>
+                <li>Connect with other book lovers</li>
+                <li>Join discussions and book clubs</li>
+            </ul>
+            
+            <div style="text-align: center;">
+                <a href="${frontendUrl}/login" class="button">
+                    Go to Login Page
+                </a>
+            </div>
+            
+            <h3>Need Help?</h3>
+            <p>If you have any questions or need assistance, please contact our support team at <a href="mailto:${supportEmail}">${supportEmail}</a>.</p>
+            
+            <p>Welcome aboard!<br>
             <strong>The Esharebook Team</strong></p>
         </div>
         

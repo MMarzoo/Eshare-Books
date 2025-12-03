@@ -100,7 +100,7 @@ export class NotificationEvents {
     });
   }
 
-  // ✅ استقبال إشعار حذف الكتاب (النسخة المعدلة بدون معلومات الأدمن)
+  // ✅ استقبال إشعار حذف الكتاب
   onBookDeleted() {
     this.socket.on('book-deleted', async (data) => {
       try {
@@ -118,7 +118,6 @@ export class NotificationEvents {
             reason: data.reason,
             note: data.note || 'Book removed due to policy violation',
             deletedAt: data.deletedAt,
-            // لا نُخزن معلومات الأدمن هنا
           },
         });
 
@@ -134,7 +133,7 @@ export class NotificationEvents {
     });
   }
 
-  // ✅ استقبال إشعار إلغاء العملية (النسخة المعدلة بدون معلومات الأدمن)
+  // ✅ استقبال إشعار إلغاء العملية
   onOperationCancelled() {
     this.socket.on('operation-cancelled', async (data) => {
       try {
