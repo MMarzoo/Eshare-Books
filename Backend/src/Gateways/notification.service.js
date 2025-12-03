@@ -356,4 +356,42 @@ export class NotificationService {
 
     return this.emitToUser(userId, notificationType, notification);
   }
+
+  /**
+   * ✅ إرسال إشعارات اقتراح الفئة (مقبول/مرفوض)
+   * @param {string} userId - معرف المستخدم
+   * @param {object} notificationData - بيانات الإشعار
+   */
+  async sendCategorySuggestionNotification(userId, notificationData) {
+    try {
+      const recipientSockets = getUserSockets(userId);
+
+      if (recipientSockets.length === 0) {
+        console.log(
+          `ℹ️ User ${userId} is not connected, notification will be delivered when online`
+        );
+        return { success: false, reason: 'User not connected' };
+      }
+
+      const notification = {
+        ...notificationData,
+        timestamp: new Date().toISOString(),
+      };
+
+      // إرسال الإشعار عبر Socket
+      recipientSockets.forEach((socketId) => {
+        this.io.to(socketId).emit('category-suggestion-updated', notification);
+      });
+
+      console.log(`✅ Category suggestion notification sent to user ${userId}`);
+      return {
+        success: true,
+        sentTo: recipientSockets.length,
+        notification,
+      };
+    } catch (error) {
+      console.error('❌ Error sending category suggestion notification:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }

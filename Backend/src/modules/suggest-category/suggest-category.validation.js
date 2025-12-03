@@ -1,6 +1,6 @@
 import Joi from 'joi';
 
-// Suggest Category Validation Schema
+// Suggest Category Validation Schema (للإنشاء)
 const suggestCategorySchema = Joi.object({
   name: Joi.string()
     .trim()
@@ -17,4 +17,15 @@ const suggestCategorySchema = Joi.object({
     }),
 });
 
-export default suggestCategorySchema;
+// Reject Category Validation Schema (للرفض)
+const rejectCategorySchema = Joi.object({
+  rejectionReason: Joi.string().trim().min(5).max(500).optional().allow('').messages({
+    'string.min': 'Rejection reason must be at least 5 characters long if provided.',
+    'string.max': 'Rejection reason must not exceed 500 characters.',
+  }),
+});
+
+// Accept Category Validation Schema (للقبول)
+const acceptCategorySchema = Joi.object({});
+
+export { suggestCategorySchema, rejectCategorySchema, acceptCategorySchema };

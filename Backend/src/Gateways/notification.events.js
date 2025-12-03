@@ -12,6 +12,7 @@ export class NotificationEvents {
     this.onCancelInvitation();
     this.onBookDeleted();
     this.onOperationCancelled();
+    this.onCategorySuggestionUpdated();
   }
 
   // ✅ Accept invitation with operationId
@@ -153,7 +154,6 @@ export class NotificationEvents {
             reason: data.reason,
             note: data.note || 'Operation cancelled due to book removal',
             cancelledAt: data.cancelledAt,
-            // لا نُخزن معلومات الأدمن هنا
           },
         });
 
@@ -165,6 +165,43 @@ export class NotificationEvents {
         });
       } catch (error) {
         console.error('❌ Error processing operation cancellation notification:', error);
+      }
+    });
+  }
+
+  // ✅ استقبال إشعار تحديث اقتراح الفئة
+  onCategorySuggestionUpdated() {
+    this.socket.on('category-suggestion-updated', async (data) => {
+      try {
+        console.log(`📝 Category suggestion notification for user ${this.userId}:`, data);
+
+        // حفظ الإشعار في قاعدة البيانات (إذا كان لديك نموذج للإشعارات)
+        await this.notificationService.saveNotification({
+          userId: this.userId,
+          type: data.type || 'category_suggestion_update',
+          title: data.title,
+          body: data.message,
+          data: {
+            suggestionId: data.data?.suggestionId,
+            categoryName: data.data?.categoryName,
+            action: data.data?.action,
+            rejectionReason: data.data?.rejectionReason,
+            adminId: data.data?.adminId,
+            timestamp: data.data?.timestamp,
+          },
+        });
+
+        // إرسال تأكيد للعميل
+        this.socket.emit('category-suggestion-notification-received', {
+          suggestionId: data.data?.suggestionId,
+          categoryName: data.data?.categoryName,
+          action: data.data?.action,
+          timestamp: new Date(),
+        });
+
+        console.log(`✅ Category suggestion notification processed for user ${this.userId}`);
+      } catch (error) {
+        console.error('❌ Error processing category suggestion notification:', error);
       }
     });
   }
