@@ -338,3 +338,94 @@ export const getUserOperations = asyncHandler(async (req, res) => {
     data: operations,
   });
 });
+
+
+// @desc    Get books where user is the source (books user owns/offered in operations)
+// @route   GET /api/operations/my-books-as-source
+export const getMyBooksAsSource = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+
+  const operations = await operationModel
+    .find({
+      user_src: userId,
+      isDeleted: false,
+      status: operationStatusEnum.COMPLETED
+    })
+    .populate('book_dest_id', 'Title Description image categoryId UserID')
+    .select('book_dest_id operationType status createdAt')
+    .lean();
+
+  // Extract unique books (remove duplicates)
+  const booksMap = new Map();
+
+  operations.forEach(op => {
+    if (op.book_dest_id) {
+      const bookId = op.book_dest_id._id.toString();
+      if (!booksMap.has(bookId)) {
+        booksMap.set(bookId, {
+          ...op.book_dest_id,
+          operations: []
+        });
+      }
+      booksMap.get(bookId).operations.push({
+        operationType: op.operationType,
+        status: op.status,
+        createdAt: op.createdAt
+      });
+    }
+  });
+
+  const books = Array.from(booksMap.values());
+
+  return successResponce({
+    res,
+    status: 200,
+    message: 'Your books as source retrieved successfully',
+    data: books,
+  });
+});
+
+// @desc    Get books where user is the destination (books others are offering to user)
+// @route   GET /api/operations/my-books-as-dest
+export const getMyBooksAsDest = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+
+  const operations = await operationModel
+    .find({
+      user_dest: userId,
+      isDeleted: false,
+      status: operationStatusEnum.COMPLETED
+    })
+    .populate('book_dest_id', 'Title Description image categoryId UserID')
+    .select('book_dest_id operationType status createdAt')
+    .lean();
+
+  // Extract unique books (remove duplicates)
+  const booksMap = new Map();
+
+  operations.forEach(op => {
+    if (op.book_dest_id) {
+      const bookId = op.book_dest_id._id.toString();
+      if (!booksMap.has(bookId)) {
+        booksMap.set(bookId, {
+          ...op.book_dest_id,
+          operations: []
+        });
+      }
+      booksMap.get(bookId).operations.push({
+        operationType: op.operationType,
+        status: op.status,
+        createdAt: op.createdAt
+      });
+    }
+  });
+
+  const books = Array.from(booksMap.values());
+
+  return successResponce({
+    res,
+    status: 200,
+    message: 'Books offered to you retrieved successfully',
+    data: books,
+  });
+});
