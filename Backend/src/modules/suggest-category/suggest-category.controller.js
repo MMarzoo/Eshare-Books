@@ -45,21 +45,30 @@ export const getSuggestedCategoryById = asyncHandler(async (req, res, next) => {
 // @route   POST /api/suggest-categories
 export const createSuggestedCategory = asyncHandler(async (req, res, next) => {
   const { name } = req.body;
+  const trimmedName = name.trim();
 
-  // التحقق من أن المستخدم لم يقترح نفس الفئة من قبل
+  // تحويل الاسم للصيغة الصغيرة للتحقق غير الحساس لحالة الأحرف
+  const lowercaseName = trimmedName.toLowerCase();
+
+  // التحقق من أن المستخدم لم يقترح نفس الفئة من قبل (بغض النظر عن حالة الأحرف)
   const existingSuggestion = await suggestCategoryModel.findOne({
-    name: name.trim(),
-    suggestedBy: req.user._id,
-    isDeleted: false,
+    $or: [
+      { name: trimmedName, suggestedBy: req.user._id, isDeleted: false },
+      {
+        name: { $regex: new RegExp(`^${trimmedName}$`, 'i') }, // regex غير حساس لحالة الأحرف
+        suggestedBy: req.user._id,
+        isDeleted: false,
+      },
+    ],
   });
 
   if (existingSuggestion) {
     return next(new AppError('You have already suggested this category before', 400));
   }
 
-  // التحقق إذا كانت الفئة موجودة بالفعل في الفئات الرئيسية
+  // التحقق إذا كانت الفئة موجودة بالفعل في الفئات الرئيسية (بغض النظر عن حالة الأحرف)
   const existingCategory = await categoryModel.findOne({
-    name: name.trim(),
+    name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
     isDeleted: false,
   });
 
@@ -68,7 +77,7 @@ export const createSuggestedCategory = asyncHandler(async (req, res, next) => {
   }
 
   const newCategory = await suggestCategoryModel.create({
-    name: name.trim(),
+    name: trimmedName,
     suggestedBy: req.user._id,
   });
 

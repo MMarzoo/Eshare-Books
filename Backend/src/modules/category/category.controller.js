@@ -38,18 +38,30 @@ export const getCategoryById = asyncHandler(async (req, res, next) => {
 // @route   POST /api/categories
 export const createCategory = asyncHandler(async (req, res, next) => {
   const { name } = req.validatedBody;
+  const trimmedName = name.trim();
 
-  const existingActive = await categoryModel.findOne({ name, isDeleted: false });
+  // استخدام regex للبحث غير الحساس لحالة الأحرف (case-insensitive)
+  const existingActive = await categoryModel.findOne({
+    name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
+    isDeleted: false,
+  });
+
   if (existingActive) {
     return next(new AppError('Category already exists', 400));
   }
 
-  const existingDeleted = await categoryModel.findOne({ name, isDeleted: true });
+  // التحقق من الفئات المحذوفة أيضاً بنفس الطريقة
+  const existingDeleted = await categoryModel.findOne({
+    name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
+    isDeleted: true,
+  });
+
   if (existingDeleted) {
     return next(new AppError('Category already exists but is deleted. You can restore it.', 400));
   }
 
-  const newCategory = await categoryModel.create({ name });
+  const newCategory = await categoryModel.create({ name: trimmedName });
+
   return successResponce({
     res,
     status: 201,
@@ -62,15 +74,86 @@ export const createCategory = asyncHandler(async (req, res, next) => {
 // @route   PUT /api/categories/:id
 export const updateCategory = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
+  const { name } = req.validatedBody;
 
+  // إذا كان الاسم مش متضمن في البيانات المحدثة، نفذ التحديث مباشرة
+  if (!name) {
+    const updated = await findByIdAndUpdate({
+      model: categoryModel,
+      id,
+      data: req.validatedBody,
+      options: { new: true },
+    });
+
+    if (!updated) {
+      return next(new AppError('Category not found', 404));
+    }
+
+    return successResponce({
+      res,
+      message: 'Category updated successfully',
+      data: updated,
+    });
+  }
+
+  const trimmedName = name.trim();
+  const nameLowercase = trimmedName.toLowerCase();
+
+  // البحث عن الفئة الحالية
+  const currentCategory = await categoryModel.findById(id);
+  if (!currentCategory || currentCategory.isDeleted) {
+    return next(new AppError('Category not found', 404));
+  }
+
+  // إذا الاسم الجديد هو نفس الاسم الحالي (case-insensitive)، نفذ التحديث مباشرة
+  if (nameLowercase === currentCategory.name.toLowerCase()) {
+    const updated = await findByIdAndUpdate({
+      model: categoryModel,
+      id,
+      data: { ...req.validatedBody, name: trimmedName },
+      options: { new: true },
+    });
+
+    return successResponce({
+      res,
+      message: 'Category updated successfully',
+      data: updated,
+    });
+  }
+
+  // التحقق من وجود فئة أخرى بنفس الاسم (غير حساس لحالة الأحرف)
+  const existingCategory = await categoryModel.findOne({
+    name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
+    _id: { $ne: id }, // استثناء الفئة الحالية
+    isDeleted: false,
+  });
+
+  if (existingCategory) {
+    return next(new AppError('Category with this name already exists', 400));
+  }
+
+  // التحقق من وجود فئة محذوفة بنفس الاسم
+  const existingDeleted = await categoryModel.findOne({
+    name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
+    _id: { $ne: id },
+    isDeleted: true,
+  });
+
+  if (existingDeleted) {
+    return next(
+      new AppError('A deleted category with this name exists. You need to restore it first.', 400)
+    );
+  }
+
+  // تنفيذ التحديث
   const updated = await findByIdAndUpdate({
     model: categoryModel,
     id,
-    data: req.validatedBody,
+    data: { ...req.validatedBody, name: trimmedName },
     options: { new: true },
   });
 
-  if (!update) {
+  if (!updated) {
     return next(new AppError('Category not found', 404));
   }
 
