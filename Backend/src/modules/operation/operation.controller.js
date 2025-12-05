@@ -1,5 +1,5 @@
 import operationModel from '../../DB/models/operation.model.js';
-import { operationStatusEnum } from '../../enum.js';
+import { operationStatusEnum, operationTypeEnum } from '../../enum.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { findByIdAndUpdate, softDelete } from '../../DB/db.services.js';
 import userModel from '../../DB/models/User.model.js';
@@ -340,7 +340,7 @@ export const getUserOperations = asyncHandler(async (req, res) => {
 });
 
 
-// @desc    Get books where user is the source (books user owns/offered in operations)
+/// @desc    Get books where user is the source (books user owns/offered in operations)
 // @route   GET /api/operations/my-books-as-source
 export const getMyBooksAsSource = asyncHandler(async (req, res) => {
   const userId = req.user._id;
@@ -351,37 +351,102 @@ export const getMyBooksAsSource = asyncHandler(async (req, res) => {
       isDeleted: false,
       status: operationStatusEnum.COMPLETED
     })
-    .populate('book_dest_id', 'Title Description image categoryId UserID')
-    .select('book_dest_id operationType status createdAt')
+    .populate('book_dest_id', 'Title Description image categoryId UserID Price PricePerDay TransactionType')
+    .populate('user_dest', 'firstName secondName email profilePic')
+    .select('book_dest_id user_dest operationType status createdAt updatedAt totalPrice startDate endDate numberOfDays paymentStatus')
+    .sort({ createdAt: -1 })
     .lean();
 
-  // Extract unique books (remove duplicates)
+  // Group operations by book
   const booksMap = new Map();
 
   operations.forEach(op => {
     if (op.book_dest_id) {
       const bookId = op.book_dest_id._id.toString();
+      
       if (!booksMap.has(bookId)) {
         booksMap.set(bookId, {
           ...op.book_dest_id,
           operations: []
         });
       }
+      
+      // Calculate price per day for borrow operations
+      let pricePerDay = 0;
+      if (op.operationType === 'borrow' && op.numberOfDays && op.totalPrice) {
+        pricePerDay = (op.totalPrice / op.numberOfDays).toFixed(2);
+      } else if (op.operationType === 'borrow' && op.book_dest_id.PricePerDay) {
+        pricePerDay = op.book_dest_id.PricePerDay;
+      }
+
+      // Add detailed operation info
       booksMap.get(bookId).operations.push({
+        _id: op._id,
         operationType: op.operationType,
         status: op.status,
-        createdAt: op.createdAt
+        totalPrice: op.totalPrice || 0,
+        recipient: {
+          _id: op.user_dest._id,
+          name: `${op.user_dest.firstName} ${op.user_dest.secondName}`,
+          email: op.user_dest.email,
+          profilePic: op.user_dest.profilePic
+        },
+        // For borrow operations
+        borrowDetails: op.operationType === 'borrow' ? {
+          startDate: op.startDate,
+          endDate: op.endDate,
+          numberOfDays: op.numberOfDays || 0,
+          pricePerDay: Number(pricePerDay),
+          totalPrice: op.totalPrice || 0
+        } : null,
+        // For buy/sell operations
+        saleDetails: op.operationType === 'buy' ? {
+          salePrice: op.totalPrice || op.book_dest_id.Price || 0,
+          soldTo: `${op.user_dest.firstName} ${op.user_dest.secondName}`,
+          soldAt: op.createdAt
+        } : null,
+        // For donate operations
+        donationDetails: op.operationType === 'donate' ? {
+          donatedTo: `${op.user_dest.firstName} ${op.user_dest.secondName}`,
+          donatedAt: op.createdAt
+        } : null,
+        // For exchange operations
+        exchangeDetails: op.operationType === 'exchange' ? {
+          exchangedWith: `${op.user_dest.firstName} ${op.user_dest.secondName}`,
+          exchangedAt: op.createdAt
+        } : null,
+        paymentStatus: op.paymentStatus || 'pending',
+        transactionDate: op.createdAt,
+        completedAt: op.updatedAt
       });
     }
   });
 
-  const books = Array.from(booksMap.values());
+  const books = Array.from(booksMap.values()).map(item => ({
+    _id: item._id,
+    Title: item.Title,
+    Description: item.Description,
+    image: item.image,
+    categoryId: item.categoryId,
+    UserID: item.UserID,
+    TransactionType: item.TransactionType,
+    totalOperations: item.operations.length,
+    totalRevenue: item.operations.reduce((sum, op) => sum + (op.totalPrice || 0), 0),
+    operations: item.operations
+  }));
 
   return successResponce({
     res,
     status: 200,
     message: 'Your books as source retrieved successfully',
-    data: books,
+    data: {
+      books,
+      summary: {
+        totalBooks: books.length,
+        totalOperations: operations.length,
+        totalRevenue: books.reduce((sum, book) => sum + book.totalRevenue, 0)
+      }
+    },
   });
 });
 
@@ -396,36 +461,108 @@ export const getMyBooksAsDest = asyncHandler(async (req, res) => {
       isDeleted: false,
       status: operationStatusEnum.COMPLETED
     })
-    .populate('book_dest_id', 'Title Description image categoryId UserID')
-    .select('book_dest_id operationType status createdAt')
+    .populate('book_dest_id', 'Title Description image categoryId UserID Price PricePerDay TransactionType')
+    .populate('user_src', 'firstName secondName email profilePic')
+    .select('book_dest_id user_src operationType status createdAt updatedAt totalPrice startDate endDate numberOfDays paymentStatus')
+    .sort({ createdAt: -1 })
     .lean();
 
-  // Extract unique books (remove duplicates)
+  // Group operations by book
   const booksMap = new Map();
 
   operations.forEach(op => {
     if (op.book_dest_id) {
       const bookId = op.book_dest_id._id.toString();
+      
       if (!booksMap.has(bookId)) {
         booksMap.set(bookId, {
           ...op.book_dest_id,
           operations: []
         });
       }
+      
+      // Calculate price per day for borrow operations
+      let pricePerDay = 0;
+      if (op.operationType === 'borrow' && op.numberOfDays && op.totalPrice) {
+        pricePerDay = (op.totalPrice / op.numberOfDays).toFixed(2);
+      } else if (op.operationType === 'borrow' && op.book_dest_id.PricePerDay) {
+        pricePerDay = op.book_dest_id.PricePerDay;
+      }
+
+      // Add detailed operation info
       booksMap.get(bookId).operations.push({
+        _id: op._id,
         operationType: op.operationType,
         status: op.status,
-        createdAt: op.createdAt
+        totalPrice: op.totalPrice || 0,
+        provider: {
+          _id: op.user_src._id,
+          name: `${op.user_src.firstName} ${op.user_src.secondName}`,
+          email: op.user_src.email,
+          profilePic: op.user_src.profilePic
+        },
+        // For borrow operations
+        borrowDetails: op.operationType === 'borrow' ? {
+          startDate: op.startDate,
+          endDate: op.endDate,
+          numberOfDays: op.numberOfDays || 0,
+          pricePerDay: Number(pricePerDay),
+          totalPrice: op.totalPrice || 0,
+          borrowedFrom: `${op.user_src.firstName} ${op.user_src.secondName}`
+        } : null,
+        // For buy operations
+        purchaseDetails: op.operationType === 'buy' ? {
+          purchasePrice: op.totalPrice || op.book_dest_id.Price || 0,
+          boughtFrom: `${op.user_src.firstName} ${op.user_src.secondName}`,
+          purchasedAt: op.createdAt
+        } : null,
+        // For donate operations
+        donationDetails: op.operationType === 'donate' ? {
+          donatedBy: `${op.user_src.firstName} ${op.user_src.secondName}`,
+          donatedAt: op.createdAt
+        } : null,
+        // For exchange operations
+        exchangeDetails: op.operationType === 'exchange' ? {
+          exchangedWith: `${op.user_src.firstName} ${op.user_src.secondName}`,
+          exchangedAt: op.createdAt
+        } : null,
+        paymentStatus: op.paymentStatus || 'pending',
+        transactionDate: op.createdAt,
+        receivedAt: op.updatedAt
       });
     }
   });
 
-  const books = Array.from(booksMap.values());
+  const books = Array.from(booksMap.values()).map(item => ({
+    _id: item._id,
+    Title: item.Title,
+    Description: item.Description,
+    image: item.image,
+    categoryId: item.categoryId,
+    UserID: item.UserID,
+    TransactionType: item.TransactionType,
+    totalOperations: item.operations.length,
+    totalSpent: item.operations.reduce((sum, op) => sum + (op.totalPrice || 0), 0),
+    operations: item.operations
+  }));
 
   return successResponce({
     res,
     status: 200,
-    message: 'Books offered to you retrieved successfully',
-    data: books,
+    message: 'Books received from others retrieved successfully',
+    data: {
+      books,
+      summary: {
+        totalBooks: books.length,
+        totalOperations: operations.length,
+        totalSpent: books.reduce((sum, book) => sum + book.totalSpent, 0),
+        byOperationType: {
+          purchased: operations.filter(op => op.operationType === 'buy').length,
+          borrowed: operations.filter(op => op.operationType === 'borrow').length,
+          donated: operations.filter(op => op.operationType === 'donate').length,
+          exchanged: operations.filter(op => op.operationType === 'exchange').length
+        }
+      }
+    },
   });
 });
