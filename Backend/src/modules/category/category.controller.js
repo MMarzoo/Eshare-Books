@@ -124,7 +124,7 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
   // التحقق من وجود فئة أخرى بنفس الاسم (غير حساس لحالة الأحرف)
   const existingCategory = await categoryModel.findOne({
     name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
-    _id: { $ne: id }, // استثناء الفئة الحالية
+    _id: { $ne: id },
     isDeleted: false,
   });
 
@@ -155,6 +155,123 @@ export const updateCategory = asyncHandler(async (req, res, next) => {
 
   if (!updated) {
     return next(new AppError('Category not found', 404));
+  }
+
+  // ✅ إرسال إشعارات للمستخدمين المتأثرين بتغيير اسم الفئة
+  try {
+    // Import النماذج المطلوبة والـ enums
+    const Book = await import('../../DB/models/bookmodel.js').then((m) => m.default || m);
+    const operationModel = await import('../../DB/models/operation.model.js').then(
+      (m) => m.default || m
+    );
+    const { operationTypeEnum, operationStatusEnum } = await import('../../enum.js');
+    const { getNotificationService } = await import('../../Gateways/soketio.gateway.js');
+
+    console.log(`📢 Starting category update notifications for category ${id}`);
+
+    // الحصول على جميع الكتب النشطة في هذه الفئة
+    const booksInCategory = await Book.find({
+      categoryId: id,
+      isDeleted: false,
+    }).select('_id UserID Title');
+
+    console.log(`📚 Found ${booksInCategory.length} books in category "${updated.name}"`);
+
+    if (booksInCategory.length > 0) {
+      const bookIds = booksInCategory.map((book) => book._id);
+
+      // ✅ البحث عن الكتب التي تم بيعها أو التبرع بها (نستثنيها من الإشعارات)
+      // 🔴 التصحيحات الرئيسية هنا:
+      const excludedOperations = await operationModel
+        .find({
+          book_dest_id: { $in: bookIds }, // ✅ استخدام book_dest_id بدلاً من book_src_id
+          operationType: { $in: [operationTypeEnum.BUY, operationTypeEnum.DONATE] }, // ✅ استخدام enums
+          status: operationStatusEnum.COMPLETED, // ✅ استخدام enum
+          isDeleted: false, // ✅ إضافة فلتر isDeleted
+        })
+        .select('book_dest_id operationType');
+
+      console.log(`🔍 Found ${excludedOperations.length} sold/donated operations to exclude`);
+
+      // إنشاء Set من IDs الكتب المستثناة
+      const excludedBookIds = new Set(excludedOperations.map((op) => op.book_dest_id.toString()));
+
+      // تصفية الكتب المؤهلة للإشعارات (استثناء الكتب المباعة/المتبرع بها)
+      const eligibleBooks = booksInCategory.filter(
+        (book) => !excludedBookIds.has(book._id.toString())
+      );
+
+      console.log(`✅ ${eligibleBooks.length} eligible books found for notifications`);
+
+      // الحصول على IDs المستخدمين الفريدة
+      const userIds = [...new Set(eligibleBooks.map((book) => book.UserID.toString()))];
+
+      console.log(`👥 Preparing to notify ${userIds.length} unique users`);
+
+      // إرسال إشعار لكل مستخدم
+      if (userIds.length > 0) {
+        const notificationService = getNotificationService();
+
+        for (const userId of userIds) {
+          // الحصول على كتب المستخدم المتأثرة
+          const userBooks = eligibleBooks.filter((book) => book.UserID.toString() === userId);
+
+          const notificationData = {
+            type: 'category_update',
+            title: 'Category Name Updated',
+            message: `The category "${currentCategory.name}" has been renamed to "${trimmedName}". You have ${userBooks.length} book(s) in this category.`,
+            data: {
+              categoryId: id,
+              oldCategoryName: currentCategory.name,
+              newCategoryName: trimmedName,
+              affectedBooksCount: userBooks.length,
+              affectedBooks: userBooks.map((book) => ({
+                id: book._id,
+                title: book.Title,
+              })),
+              updatedAt: new Date().toISOString(),
+            },
+          };
+
+          // إرسال الإشعار عبر Socket.IO
+          const emitResult = notificationService.emitToUser(
+            userId,
+            'category-updated',
+            notificationData
+          );
+
+          console.log(
+            `📤 Emit result for user ${userId}:`,
+            emitResult.success ? 'Success' : 'Failed',
+            emitResult
+          );
+
+          // حفظ الإشعار في قاعدة البيانات (اختياري)
+          await notificationService.saveNotification({
+            userId: userId,
+            type: 'category_update',
+            title: notificationData.title,
+            body: notificationData.message,
+            data: notificationData.data,
+          });
+
+          console.log(`✅ Category update notification sent to user ${userId}`);
+        }
+
+        console.log(
+          `📢 Category update notifications sent to ${userIds.length} user(s) for ${eligibleBooks.length} eligible book(s)`
+        );
+      } else {
+        console.log('ℹ️ No users to notify (all books are sold/donated or deleted)');
+      }
+    } else {
+      console.log('ℹ️ No books found in this category');
+    }
+  } catch (notificationError) {
+    // لا نريد أن يفشل التحديث بسبب فشل الإشعارات
+    console.error('❌ Error sending category update notifications:', notificationError);
+    console.error('Stack trace:', notificationError.stack);
+    // يمكنك إضافة logging system هنا
   }
 
   return successResponce({

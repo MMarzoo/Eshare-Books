@@ -13,6 +13,7 @@ export class NotificationEvents {
     this.onBookDeleted();
     this.onOperationCancelled();
     this.onCategorySuggestionUpdated();
+    this.onCategoryUpdated();
   }
 
   // ✅ Accept invitation with operationId
@@ -202,6 +203,43 @@ export class NotificationEvents {
         console.log(`✅ Category suggestion notification processed for user ${this.userId}`);
       } catch (error) {
         console.error('❌ Error processing category suggestion notification:', error);
+      }
+    });
+  }
+
+  // ✅ استقبال إشعار تحديث اسم الفئة
+  onCategoryUpdated() {
+    this.socket.on('category-updated', async (data) => {
+      try {
+        console.log(`📝 Category update notification for user ${this.userId}:`, data);
+
+        // حفظ الإشعار في قاعدة البيانات
+        await this.notificationService.saveNotification({
+          userId: this.userId,
+          type: data.type || 'category_update',
+          title: data.title,
+          body: data.message,
+          data: {
+            categoryId: data.data?.categoryId,
+            oldCategoryName: data.data?.oldCategoryName,
+            newCategoryName: data.data?.newCategoryName,
+            affectedBooksCount: data.data?.affectedBooksCount,
+            affectedBooks: data.data?.affectedBooks,
+            updatedAt: data.data?.updatedAt,
+          },
+        });
+
+        // إرسال تأكيد للعميل
+        this.socket.emit('category-update-notification-received', {
+          categoryId: data.data?.categoryId,
+          oldName: data.data?.oldCategoryName,
+          newName: data.data?.newCategoryName,
+          timestamp: new Date(),
+        });
+
+        console.log(`✅ Category update notification processed for user ${this.userId}`);
+      } catch (error) {
+        console.error('❌ Error processing category update notification:', error);
       }
     });
   }
