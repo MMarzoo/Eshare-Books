@@ -349,7 +349,8 @@ export const getMyBooksAsSource = asyncHandler(async (req, res) => {
     .find({
       user_src: userId,
       isDeleted: false,
-      status: operationStatusEnum.COMPLETED
+      status: operationStatusEnum.COMPLETED,
+      paymentStatus : "paid"
     })
     .populate('book_dest_id', 'Title Description image categoryId UserID Price PricePerDay TransactionType')
     .populate('user_dest', 'firstName secondName email profilePic')
@@ -459,7 +460,8 @@ export const getMyBooksAsDest = asyncHandler(async (req, res) => {
     .find({
       user_dest: userId,
       isDeleted: false,
-      status: operationStatusEnum.COMPLETED
+      status: operationStatusEnum.COMPLETED,
+      paymentStatus : "paid"
     })
     .populate('book_dest_id', 'Title Description image categoryId UserID Price PricePerDay TransactionType')
     .populate('user_src', 'firstName secondName email profilePic')
